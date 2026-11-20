@@ -23,7 +23,10 @@ fam_device g_dev;
 static uint32_t g_d3d_obj;
 
 /* ---------------------------------------------------------------- modes */
-static const struct { uint32_t w, h; } k_modes[] = { {640, 480}, {800, 600}, {1024, 768} };
+/* 854x480 is the 16:9 mode the port uses by default (FAMILIA_WIDESCREEN):
+ * the 2D UI keeps its 480-line size while 3D is rasterised at the display's
+ * native resolution (the viewport maps the back buffer onto the drawable). */
+static const struct { uint32_t w, h; } k_modes[] = { {640, 480}, {800, 600}, {1024, 768}, {854, 480}, {1280, 720}, {1920, 1080} };
 #define NMODES (sizeof k_modes / sizeof *k_modes)
 static int mode_format_ok(uint32_t f) { return f == D3DFMT_X8R8G8B8 || f == D3DFMT_R5G6B5; }
 
@@ -52,7 +55,8 @@ static void d_EnumAdapterModes(void) {             /* (this, adapter, mode, D3DD
 }
 static void d_GetAdapterDisplayMode(void) {        /* (this, adapter, mode*) */
     fam_D3DDISPLAYMODE *m = APTR(2);
-    m->Width = 640; m->Height = 480; m->RefreshRate = 60; m->Format = D3DFMT_X8R8G8B8;
+    int ws = fam_config_int("widescreen", 1);
+    m->Width = ws ? 854 : 640; m->Height = 480; m->RefreshRate = 60; m->Format = D3DFMT_X8R8G8B8;
     RET(S_OK, 3);
 }
 static void d_CheckDeviceType(void) {              /* (this, adapter, type, displayfmt, bbfmt, windowed) */
@@ -155,7 +159,8 @@ void fam_update_output_rect(void) {
     if (!g_dev.window) return;
     SDL_GL_GetDrawableSize(g_dev.window, &g_dev.drawable_w, &g_dev.drawable_h);
     int dw = g_dev.drawable_w, dh = g_dev.drawable_h, bw = g_dev.bb_w ? g_dev.bb_w : 640, bh = g_dev.bb_h ? g_dev.bb_h : 480;
-    if ((long)dw * bh > (long)dh * bw) { g_dev.out_h = dh; g_dev.out_w = (int)((long)dh * bw / bh); }
+    if (labs((long)dw * bh - (long)dh * bw) * 100 <= (long)dh * bw) { g_dev.out_w = dw; g_dev.out_h = dh; }   /* same aspect within 1%: fill */
+    else if ((long)dw * bh > (long)dh * bw) { g_dev.out_h = dh; g_dev.out_w = (int)((long)dh * bw / bh); }
     else { g_dev.out_w = dw; g_dev.out_h = (int)((long)dw * bh / bw); }
     g_dev.out_x = (dw - g_dev.out_w) / 2; g_dev.out_y = (dh - g_dev.out_h) / 2;
     g_dev.state_dirty |= FAM_DIRTY_VP;

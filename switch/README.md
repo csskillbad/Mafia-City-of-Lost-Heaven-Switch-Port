@@ -13,10 +13,17 @@ DirectSound layer answered by SDL2 + OpenGL ES (Mesa) on Horizon OS.
   backed on demand with `svcMapPhysicalMemory` (needs the NPDM's system
   resource, so the **NSP is the supported format**).
 - `kernel32_ext.c` (`__SWITCH__`): file mappings are read into memory (no mmap).
-- Rendering: the game's 640x480 back buffer is mapped onto a centred 4:3
-  rectangle of the window, so the scene is rasterised at the display's native
-  resolution: **960x720 in handheld, 1440x1080 docked** (4:3, pillarboxed), and
-  it follows docking live.
+- Rendering: **16:9 by default.** The game runs an 854x480 (16:9) display mode,
+  mapped onto the whole window, so the scene is rasterised at the display's
+  native resolution: **1280x720 handheld, 1920x1080 docked**, following docking
+  live. `runtime/native_widescreen.c` hooks LS3D's `UpdateProjMatrix` for a Hor+
+  field of view (wider view, same vertical FOV as 4:3) with culling widened to
+  match; the game's own FOV value and draw distance are unchanged.
+  `WIDESCREEN=0` gives the original 4:3 (960x720 / 1440x1080, pillarboxed).
+- CPU: code generated for the Cortex-A57 (`-mcpu=cortex-a57+crc+crypto`), and
+  threads are placed on the 3 application cores: game on core 0, the GL replay
+  thread (driver work) on core 1, sound/streaming/SDL audio on core 2. libnx
+  would otherwise start them all on core 0.
 
 ## Build
 ```sh
@@ -46,5 +53,6 @@ from the main README works as `KEY=VALUE` here.
 ## Known limits
 - The Bink logo (`Logo3.bik`) is skipped: devkitPro's FFmpeg has no Bink
   decoder. The `.avi` intros play.
-- 4:3 only (the game's HUD and FOV are 4:3).
+- In 16:9 the 2D HUD and menus are laid out by the game for the wider screen;
+  some full-screen 2D artwork may look stretched.
 - Untested on hardware at the time of writing; see the commit log for status.

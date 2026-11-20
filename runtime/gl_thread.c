@@ -266,7 +266,9 @@ void fam_glt_start(void) {
 #ifdef __SWITCH__
     {   /* [familia-switch] the driver (Mesa) runs on this thread: libnx's
          * default stack is too small for it */
+        void nx_next_thread_core(int core);
         pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setstacksize(&at, 1u << 20);
+        nx_next_thread_core(1);          /* the driver gets its own core (switch/nx_platform.c) */
         pthread_create(&g_thr, &at, gl_thread, NULL);
     }
 #else

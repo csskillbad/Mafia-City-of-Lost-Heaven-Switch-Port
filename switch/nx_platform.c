@@ -46,6 +46,30 @@ int mprotect(void *addr, size_t len, int prot) { (void)addr; (void)len; (void)pr
 int madvise(void *addr, size_t len, int advice) { (void)addr; (void)len; (void)advice; return 0; }
 int msync(void *addr, size_t len, int flags) { (void)addr; (void)len; (void)flags; return 0; }
 
+/* ---- thread placement -------------------------------------------------
+ * libnx creates every thread on the process's default core (core 0) unless
+ * told otherwise: the game thread, the GL replay thread, the guest's sound /
+ * streaming threads and SDL's audio thread would all share one core. Every
+ * thread (pthreads and SDL's go through threadCreate) is placed here:
+ *   core 0  the game (main thread)
+ *   core 1  the GL replay thread (driver work), requested by gl_thread.c
+ *   core 2  everything else: sound mixing, streaming, SDL audio
+ * FAMILIA_PIN=0 keeps libnx's default placement. */
+#include <stdatomic.h>
+static atomic_int g_next_core = -1;
+static int g_pin = -1;
+void nx_next_thread_core(int core) { atomic_store(&g_next_core, core); }
+
+Result __real_threadCreate(Thread *t, ThreadFunc entry, void *arg, void *stack_mem, size_t stack_sz, int prio, int cpuid);
+Result __wrap_threadCreate(Thread *t, ThreadFunc entry, void *arg, void *stack_mem, size_t stack_sz, int prio, int cpuid) {
+    if (g_pin < 0) { const char *e = getenv("FAMILIA_PIN"); g_pin = e && *e ? atoi(e) : 1; }
+    if (g_pin && cpuid == -2) {
+        int want = atomic_exchange(&g_next_core, -1);
+        cpuid = want >= 0 ? want : 2;
+    }
+    return __real_threadCreate(t, entry, arg, stack_mem, stack_sz, prio, cpuid);
+}
+
 /* Linux-only diagnostics (signal crash handler, SIGPROF profiler). */
 void fam_crash_install(void) {}
 void fam_prof_start(void) {}
@@ -63,8 +87,13 @@ static const char k_default_config[] =
     "\n"
     "# 60 = cap at 60 fps, 30 = cap at 30 fps (steadier), 0 = no cap\n"
     "LIMIT=60\n"
-    "# 1 = wait for the display refresh (no tearing), 0 = off\n"
-    "VSYNC=1\n"
+    "# 0 = present as soon as a frame is ready (the Switch compositor does not\n"
+    "#     tear; LIMIT paces it), 1 = wait for the refresh (drops to 30 under 60)\n"
+    "VSYNC=0\n"
+    "# 1 = 16:9 with a wider field of view (Hor+), 0 = original 4:3\n"
+    "WIDESCREEN=1\n"
+    "# 1 = spread threads over the CPU cores (game / GL driver / sound)\n"
+    "PIN=1\n"
     "# 1 = show an FPS counter\n"
     "FPS=0\n"
     "# right-stick look speed (TheFamilia default 30)\n"
@@ -134,6 +163,8 @@ int main(int argc, char **argv) {
     nx_load_config(NX_ROOT "/config.ini");
     nx_setenv_default("FAMILIA_GAME_DIR", NX_ROOT "/data");
     nx_setenv_default("FAMILIA_USER_DIR", NX_ROOT "/userdata");
+    /* No OS page cache on Horizon: the Linux read-ahead would only cost I/O */
+    nx_setenv_default("FAMILIA_READAHEAD", "0");
     fprintf(stderr, "[nx] The Familia (Switch) starting\n");
     AppletOperationMode mode = appletGetOperationMode();
     fprintf(stderr, "[nx] %s mode\n", mode == AppletOperationMode_Console ? "docked (1080p)" : "handheld (720p)");

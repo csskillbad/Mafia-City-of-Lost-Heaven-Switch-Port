@@ -32,7 +32,22 @@ const char *fam_user_dir(void) { return g_user; }
 static void put32(uint8_t *b, int o, uint32_t v) { memcpy(b + o, &v, 4); }
 /* The launcher's texture choice (FAMILIA_TEXTURES=32 or 16) applied to the
  * setup value at every start: texture_true_color is byte 0x1C. */
+/* FAMILIA_WIDESCREEN (default 1): 854x480 (16:9) display mode, else 640x480.
+ * Applied at every start, like the texture choice. */
+static void apply_resolution_choice(void) {
+    const char *e = getenv("FAMILIA_WIDESCREEN");
+    int ws = e && *e ? atoi(e) : 1;
+    uint8_t b[0x3F];
+    if (hle_reg_get_binary(HKLM, MAFIA_KEY, "LS3D_setup", b, sizeof b) != sizeof b) return;
+    uint32_t w = ws ? 854 : 640, h = 480, cw, ch;
+    memcpy(&cw, b + 0x02, 4); memcpy(&ch, b + 0x06, 4);
+    if (cw == w && ch == h) return;
+    put32(b, 0x02, w); put32(b, 0x06, h);
+    hle_reg_set_binary(HKLM, MAFIA_KEY, "LS3D_setup", b, sizeof b);
+    fprintf(stderr, "[paths] display mode %ux%u (%s)\n", w, h, ws ? "16:9" : "4:3");
+}
 static void apply_texture_choice(void) {
+    apply_resolution_choice();
     const char *e = getenv("FAMILIA_TEXTURES");
     if (!e) return;
     uint8_t b[0x3F];
@@ -65,7 +80,15 @@ static char g_game[PATH_MAX];
 const char *fam_game_dir(void) { return g_game; }
 void fam_paths_init(const char *game_dir) {
     char real[PATH_MAX];
-    if (!realpath(game_dir, real)) { fprintf(stderr, "[paths] game dir %s missing\n", game_dir); exit(2); }
+    if (!realpath(game_dir, real)) {
+#ifdef __SWITCH__
+        /* [familia-switch] newlib's realpath may not resolve device paths:
+         * nx_platform.c already checked the directory exists */
+        snprintf(real, sizeof real, "%s", game_dir);
+#else
+        fprintf(stderr, "[paths] game dir %s missing\n", game_dir); exit(2);
+#endif
+    }
     snprintf(g_game, sizeof g_game, "%s", real);
     const char *u = getenv("FAMILIA_USER_DIR");
     if (u) snprintf(g_user, sizeof g_user, "%s", u);

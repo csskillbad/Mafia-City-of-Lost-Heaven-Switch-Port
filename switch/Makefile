@@ -11,7 +11,8 @@ PC      := third_party/pcrecomp
 PORTLIBS := $(DEVKITPRO)/portlibs/switch
 TARGET  := $(OUT)/familia
 
-ARCH    := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
+# Tegra X1: 4x Cortex-A57 (3 for applications), ARMv8.0-A with CRC + crypto.
+ARCH    := -mcpu=cortex-a57+crc+crypto -mtp=soft -fPIE
 OPT     ?= -O2
 DEFS    := -D__SWITCH__ -DFAMILIA_SWITCH -D_GNU_SOURCE
 INCS    := -Iswitch/compat -I$(PC)/recomp32 -I$(PC)/win32hle -Iruntime \
@@ -20,7 +21,8 @@ INCS    := -Iswitch/compat -I$(PC)/recomp32 -I$(PC)/win32hle -Iruntime \
 # lift adds the runtime g_mem_base (recomp_types.h).
 CFLAGS  := $(ARCH) $(OPT) -g1 -ffunction-sections -fno-strict-aliasing -fwrapv $(DEFS) $(INCS)
 GENFLAGS := $(CFLAGS) -w -DRECOMP_LOCAL_REGS -DRECOMP_NONVOLATILE_MEM
-LDFLAGS := -specs=$(DEVKITPRO)/libnx/switch.specs $(ARCH) -Wl,-Map,$(TARGET).map
+# threadCreate is wrapped (nx_platform.c) to spread threads over the cores.
+LDFLAGS := -specs=$(DEVKITPRO)/libnx/switch.specs $(ARCH) -Wl,-Map,$(TARGET).map -Wl,--wrap=threadCreate
 LIBS    := -L$(PORTLIBS)/lib -L$(DEVKITPRO)/libnx/lib \
            -lSDL2_ttf -lfreetype -lharfbuzz -lbz2 -lpng16 \
            -lSDL2 -lEGL -lGLESv2 -lglapi -ldrm_nouveau \
