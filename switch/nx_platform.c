@@ -76,6 +76,8 @@ Result __wrap_threadCreate(Thread *t, ThreadFunc entry, void *arg, void *stack_m
     return rc;
 }
 
+void nx_set_self_priority(int prio) { svcSetThreadPriority(CUR_THREAD_HANDLE, prio); }
+
 /* Linux-only diagnostics (signal crash handler, SIGPROF profiler). */
 void fam_crash_install(void) {}
 void fam_prof_start(void) {}
@@ -214,8 +216,13 @@ int main(int argc, char **argv) {
     freopen(NX_ROOT "/log.txt", "w", stderr);
     setvbuf(stderr, NULL, _IOLBF, 0);
 
+    /* Game files: sd:/switch/mafia/data, or inside the NSP (romfs:/data) for a
+     * personal all-in-one build (switch/make_nsp.sh FULL=1). An all-in-one NSP uses its own copy. */
     struct stat st;
-    if (stat(NX_ROOT "/data/Game.exe", &st) != 0 && stat(NX_ROOT "/data/game.exe", &st) != 0) {
+    const char *game_dir = NULL;
+    if (stat("romfs:/data/Game.exe", &st) == 0 || stat("romfs:/data/game.exe", &st) == 0) game_dir = "romfs:/data";
+    else if (stat(NX_ROOT "/data/Game.exe", &st) == 0 || stat(NX_ROOT "/data/game.exe", &st) == 0) game_dir = NX_ROOT "/data";
+    if (!game_dir) {
         fprintf(stderr, "[nx] %s/data/Game.exe not found: copy your Mafia 1.2 files there\n", NX_ROOT);
         consoleInit(NULL);
         printf("Mafia\n\nCopy your own Mafia 1.2 game files to\n  sd:%s/data/\n(Game.exe, LS3DF.dll, rw_data.dll, IJoy.dll, *.dta, ...)\n\nPress + to exit.\n", NX_ROOT);
@@ -232,7 +239,8 @@ int main(int argc, char **argv) {
     }
 
     nx_load_config(NX_ROOT "/config.ini");
-    nx_setenv_default("FAMILIA_GAME_DIR", NX_ROOT "/data");
+    nx_setenv_default("FAMILIA_GAME_DIR", game_dir);
+    fprintf(stderr, "[nx] game files: %s\n", game_dir);
     nx_setenv_default("FAMILIA_USER_DIR", NX_ROOT "/userdata");
     /* No OS page cache on Horizon: the Linux read-ahead would only cost I/O */
     nx_setenv_default("FAMILIA_READAHEAD", "0");
@@ -249,6 +257,10 @@ int main(int argc, char **argv) {
         appletSetCpuBoostMode(ApmCpuBoostMode_FastLoad);
     appletSetFocusHandlingMode(AppletFocusHandlingMode_SuspendHomeSleepNotify);
     { void nx_prof_init(void); nx_prof_init(); }
+#ifdef FAMILIA_PGO_GEN
+    mkdir("/switch/mafia/pgo", 0777);   /* libgcov writes the counters here */
+    fprintf(stderr, "[nx] PGO training build: counters go to /switch/mafia/pgo\n");
+#endif
     int rc = familia_main(argc, argv);
     nx_clock_stop();
     appletSetCpuBoostMode(ApmCpuBoostMode_Normal);

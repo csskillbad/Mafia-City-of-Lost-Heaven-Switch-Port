@@ -4,6 +4,11 @@
 # signs with hacBrewPack on the host. Contains no game data.
 #
 #   PROD_KEYS=/path/to/prod.keys bash switch/make_nsp.sh
+#
+# FULL=1 GAME_DIR=/path/to/Mafia: a personal all-in-one NSP with your game
+# files inside (romfs:/data, read when sd:/switch/mafia/data is absent).
+# Output build/switch/Mafia_full.nsp. It contains the game: for your own
+# console only, never share or upload it.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
@@ -13,8 +18,11 @@ hbp="${HACBREWPACK:-$(command -v hacbrewpack || echo "$HOME/.local/bin/hacbrewpa
 version="${APP_VERSION:-0.1.0}"
 stage=build/switch/nsp_stage
 out=build/switch/Mafia.nsp
+full="${FULL:-0}"
+[ "$full" = 1 ] && out=build/switch/Mafia_full.nsp
 
-[ -f build/switch/familia.elf ] || { echo "build/switch/familia.elf missing: build first" >&2; exit 2; }
+elf="${ELF:-build/switch/familia.elf}"
+[ -f "$elf" ] || { echo "$elf missing: build first" >&2; exit 2; }
 [ -f "$keys" ] || { echo "prod.keys not found: $keys" >&2; exit 2; }
 [ -x "$hbp" ] || { echo "hacbrewpack not found" >&2; exit 2; }
 
@@ -24,13 +32,27 @@ podman run --rm --security-opt label=disable -v "$root:/src" -w /src "$img" bash
   export PATH=/opt/devkitpro/tools/bin:\$PATH
   s=$stage
   mkdir -p \$s/exefs \$s/control \$s/romfs \$s/nsp_out \$s/nca_tmp
-  elf2nso build/switch/familia.elf \$s/exefs/main
+  elf2nso $elf \$s/exefs/main
   npdmtool switch/main.npdm.json \$s/exefs/main.npdm
   nacptool --create 'Mafia' 'The Familia (Switch port)' '$version' \$s/control/control.nacp --titleid=0100d3d001420000
   cp switch/icon.jpg \$s/control/icon_AmericanEnglish.dat
   cp -r switch/romfs/. \$s/romfs/
   printf 'Game data is read from sdmc:/switch/mafia/data\n' > \$s/romfs/README.txt
 "
+
+# Game files for FULL=1 (hard links when on the same filesystem, else copies);
+# a plain build must not pick up a previous FULL build's data.
+rm -rf "$stage/romfs/data"
+if [ "$full" = 1 ]; then
+    gd="${GAME_DIR:?FULL=1 needs GAME_DIR=/path/to/your/Mafia folder}"
+    [ -e "$gd/Game.exe" ] || [ -e "$gd/game.exe" ] || { echo "no Game.exe in $gd" >&2; exit 2; }
+    mkdir -p "$stage/romfs/data"
+    for f in "$gd"/*; do
+        r="$(readlink -f "$f")"; n="$(basename "$f")"
+        cp -al "$r" "$stage/romfs/data/$n" 2>/dev/null || cp -rL "$r" "$stage/romfs/data/$n"
+    done
+    echo "game files in RomFS: $(du -shL "$stage/romfs/data" | cut -f1)"
+fi
 
 # Temporary key file: only plain 32/64-hex entries (hacBrewPack 3.05 rejects
 # newer key formats). Never printed, deleted on exit.
