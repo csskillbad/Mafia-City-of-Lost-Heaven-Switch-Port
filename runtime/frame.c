@@ -102,6 +102,9 @@ static void gcov_hook(void) {
 }
 void fam_present_hook(void) {
     gcov_hook();
+#ifdef __SWITCH__
+    { void nx_prof_frame(void); nx_prof_frame(); }
+#endif
     static int crash_ok;           /* after SDL video/audio and the GL driver have installed theirs */
     if (!crash_ok) { void fam_crash_install(void); fam_crash_install(); crash_ok = 1; }
     static int fps_on = -1; static double fps_shown; static uint64_t fps_t0, fps_n;

@@ -67,12 +67,71 @@ Result __wrap_threadCreate(Thread *t, ThreadFunc entry, void *arg, void *stack_m
         int want = atomic_exchange(&g_next_core, -1);
         cpuid = want >= 0 ? want : 2;
     }
-    return __real_threadCreate(t, entry, arg, stack_mem, stack_sz, prio, cpuid);
+    Result rc = __real_threadCreate(t, entry, arg, stack_mem, stack_sz, prio, cpuid);
+    if (R_SUCCEEDED(rc) && getenv("FAMILIA_PROF")) {
+        void nx_prof_track(Handle, const char *);
+        char nm[16]; snprintf(nm, sizeof nm, "core%d", cpuid);
+        nx_prof_track(t->handle, nm);
+    }
+    return rc;
 }
 
 /* Linux-only diagnostics (signal crash handler, SIGPROF profiler). */
 void fam_crash_install(void) {}
 void fam_prof_start(void) {}
+
+/* ---- CPU clock (CPU_CLOCK=MHz) ----
+ * The game thread is what limits the frame rate (switch/nx_prof.c profile:
+ * the GL thread idles ~80%), so its clock is the frame rate. Set through
+ * clkrst (8.0.0+) or pcv (older), the services sys-clk uses. The system puts
+ * its own profile back on dock/undock, sleep and focus changes, so a small
+ * thread re-applies the rate every 2 s if it changed. */
+static volatile int g_clk_run;
+static u32 g_clk_hz;
+static Thread g_clk_thr;
+static int clk_open(ClkrstSession *s) {
+    return hosversionAtLeast(8, 0, 0) ? R_SUCCEEDED(clkrstOpenSession(s, PcvModuleId_CpuBus, 3)) : 1;
+}
+static u32 clk_get(ClkrstSession *s) {
+    u32 hz = 0;
+    if (hosversionAtLeast(8, 0, 0)) clkrstGetClockRate(s, &hz); else pcvGetClockRate(PcvModule_CpuBus, &hz);
+    return hz;
+}
+static Result clk_set(ClkrstSession *s, u32 hz) {
+    return hosversionAtLeast(8, 0, 0) ? clkrstSetClockRate(s, hz) : pcvSetClockRate(PcvModule_CpuBus, hz);
+}
+static void clk_thread(void *arg) {
+    (void)arg;
+    ClkrstSession s;
+    if (!clk_open(&s)) return;
+    while (g_clk_run) {
+        if (clk_get(&s) != g_clk_hz) clk_set(&s, g_clk_hz);
+        for (int i = 0; i < 20 && g_clk_run; i++) svcSleepThread(100000000ull);
+    }
+    clk_set(&s, 1020000000u);        /* the normal application clock */
+    if (hosversionAtLeast(8, 0, 0)) clkrstCloseSession(&s);
+}
+static void nx_clock_start(int mhz) {
+    if (mhz <= 0) return;
+    if (mhz > 1785) mhz = 1785;      /* the highest official clock; beyond is overclocking */
+    Result rc = hosversionAtLeast(8, 0, 0) ? clkrstInitialize() : pcvInitialize();
+    if (R_FAILED(rc)) { fprintf(stderr, "[nx] CPU clock: service unavailable (%x)\n", rc); return; }
+    g_clk_hz = (u32)mhz * 1000000u;
+    ClkrstSession s;
+    if (clk_open(&s)) {
+        rc = clk_set(&s, g_clk_hz);
+        fprintf(stderr, "[nx] CPU clock %d MHz: %s (now %u MHz)\n", mhz, R_SUCCEEDED(rc) ? "set" : "refused", clk_get(&s) / 1000000u);
+        if (hosversionAtLeast(8, 0, 0)) clkrstCloseSession(&s);
+    }
+    g_clk_run = 1;
+    if (R_SUCCEEDED(__real_threadCreate(&g_clk_thr, clk_thread, NULL, NULL, 0x4000, 0x3B, 2))) threadStart(&g_clk_thr);
+}
+static void nx_clock_stop(void) {
+    if (!g_clk_run) return;
+    g_clk_run = 0;
+    threadWaitForExit(&g_clk_thr); threadClose(&g_clk_thr);
+    if (hosversionAtLeast(8, 0, 0)) clkrstExit(); else pcvExit();
+}
 
 static void nx_setenv_default(const char *k, const char *v) {
     if (!getenv(k)) setenv(k, v, 1);
@@ -103,7 +162,13 @@ static const char k_default_config[] =
     "LOOK_SENS=30\n"
     "# 32 or 16 bit textures (16 saves memory, slightly lower quality)\n"
     "TEXTURES=32\n"
-    "# 1 = CPU boost while playing (faster CPU, lower GPU clock)\n"
+    "# CPU clock in MHz while playing. The game's main thread is the limit for\n"
+    "# 60 FPS; 1785 is the Switch's own boost clock (used by official games\n"
+    "# while loading). 1020 = the normal game clock. 0 = leave as the system sets it.\n"
+    "# Higher clock = more battery use and heat in handheld mode.\n"
+    "CPU_CLOCK=1785\n"
+    "# (old option) 1 = system boost mode: faster CPU but the GPU drops to\n"
+    "# 76 MHz - leave at 0 and use CPU_CLOCK instead\n"
     "CPU_BOOST=0\n"
     "# 1 = write performance lines to log.txt every 5 s\n"
     "STATS=0\n"
@@ -178,10 +243,14 @@ int main(int argc, char **argv) {
     fprintf(stderr, "[nx] The Familia (Switch) starting\n");
     AppletOperationMode mode = appletGetOperationMode();
     fprintf(stderr, "[nx] %s mode\n", mode == AppletOperationMode_Console ? "docked (1080p)" : "handheld (720p)");
+    nx_setenv_default("FAMILIA_CPU_CLOCK", "1785");
+    nx_clock_start(atoi(getenv("FAMILIA_CPU_CLOCK")));
     if (atoi(getenv("FAMILIA_CPU_BOOST") ? getenv("FAMILIA_CPU_BOOST") : "0"))
         appletSetCpuBoostMode(ApmCpuBoostMode_FastLoad);
     appletSetFocusHandlingMode(AppletFocusHandlingMode_SuspendHomeSleepNotify);
+    { void nx_prof_init(void); nx_prof_init(); }
     int rc = familia_main(argc, argv);
+    nx_clock_stop();
     appletSetCpuBoostMode(ApmCpuBoostMode_Normal);
     fprintf(stderr, "[nx] exit %d\n", rc);
     romfsExit();

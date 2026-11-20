@@ -47,8 +47,27 @@ Outputs: `build/switch/familia.nro`, `build/switch/Mafia.nsp`.
 
 ## Settings: `sd:/switch/mafia/config.ini`
 Created on first run. `LIMIT` (60/30/0), `VSYNC`, `FPS` counter, `LOOK_SENS`,
-`TEXTURES` (32/16), `CPU_BOOST`, `STATS`, `MOVIES`. Any `FAMILIA_*` switch
+`TEXTURES` (32/16), `CPU_CLOCK`, `STATS`, `MOVIES`. Any `FAMILIA_*` switch
 from the main README works as `KEY=VALUE` here.
+
+### Frame rate
+The game's main thread is the limit, not the GPU: profiled in the city
+(Free Ride), the GL/driver thread idles ~80% of the time while the game
+thread is always busy. Its speed is the CPU clock, so `CPU_CLOCK=1785`
+(default) asks for the Switch's own boost clock through `clkrst`/`pcv`
+(re-applied after dock/undock and sleep, put back to 1020 MHz on exit).
+`CPU_CLOCK=1020` or `0` keeps the normal clock (longer battery life in
+handheld). Free Ride's traffic and pedestrian density sliders and the
+game's view-distance option lower the game thread's work further;
+`LIMIT=30` gives a steady 30 if 60 is not held.
+
+### Profiling on the console
+`PROF=<seconds after the first frame>` and `PROF_LEN=<seconds>` sample every
+thread's PC each millisecond (`svcSetThreadActivity` + `svcGetThreadContext3`)
+into `sd:/switch/mafia/prof.txt`:
+```sh
+python3 tools/nx_prof_report.py prof.txt build/switch/familia.elf --src <decompilation>
+```
 
 ## Known limits
 - The Bink logo (`Logo3.bik`) is skipped: devkitPro's FFmpeg has no Bink

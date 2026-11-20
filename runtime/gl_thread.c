@@ -73,9 +73,15 @@ static uint8_t *fam_glt_begin(int op, size_t payload) {
     g_pend = wr + h->size;
     return g_q + off + sizeof(hdr);
 }
+/* Waking a sleeping GL thread is a syscall (condvar signal); doing it after
+ * every command cost ~4% of the game thread (switch/nx_prof.c). The GL
+ * thread sleeps only 2 ms at a time and swaps/syncs/full-queue waits always
+ * wake it, so batching the wake-ups by size only delays work it was idle for. */
+#define WAKE_BATCH (32u << 10)
+static size_t g_woken_at;
 static void fam_glt_end(void) {
     atomic_store_explicit(&g_wr, g_pend, memory_order_release);
-    wake();
+    if (g_pend - g_woken_at >= WAKE_BATCH) { g_woken_at = g_pend; wake(); }
 }
 
 /* wait until the GL thread has executed everything queued so far */
