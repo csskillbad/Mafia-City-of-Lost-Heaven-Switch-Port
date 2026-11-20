@@ -24,6 +24,18 @@ static void u_VkKeyScanA(void) {                           /* (ch) -> low byte V
     else if (c >= 'A' && c <= 'Z') r = c | 0x100;
     else if (c >= '0' && c <= '9') r = c;
     else if (c == ' ') r = 0x20;
+    /* control keys: the profile name dialog reads Enter as WM_CHAR '\r'
+     * through VkKeyScanA + MapVirtualKeyA (IGraph::ProcessWinMessages);
+     * without them the first-run dialog could never be confirmed */
+    else if (c == '\r' || c == '\n') r = 0x0D;
+    else if (c == '\b') r = 0x08;
+    else if (c == '\t') r = 0x09;
+    else if (c == 0x1B) r = 0x1B;
+    /* US layout punctuation (VK_OEM_*; high byte 1 = shift) */
+    else if (c == '-') r = 0xBD; else if (c == '_') r = 0x1BD;
+    else if (c == '=') r = 0xBB; else if (c == '+') r = 0x1BB;
+    else if (c == ',') r = 0xBC; else if (c == '.') r = 0xBE;
+    else if (c == '/') r = 0xBF; else if (c == '\'') r = 0xDE;
     else r = 0xFFFF;
     RET(r, 1);
 }

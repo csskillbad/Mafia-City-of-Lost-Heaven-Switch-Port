@@ -143,6 +143,9 @@ static void script_init(void) {
     fprintf(stderr, "[input] script: %d key presses\n", g_nscript);
 }
 static void script_update(void) {
+    /* the script's clock starts at the first presented frame, so timings do
+     * not depend on how long loading (or an emulator's JIT) took */
+    if (g_dev.frame == 0) { g_script_t0 = SDL_GetTicks(); return; }
     uint32_t now = SDL_GetTicks() - g_script_t0;
     for (int i = 0; i < g_nscript; i++) {
         script_key *k = &g_script[i];
