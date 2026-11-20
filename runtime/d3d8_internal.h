@@ -145,3 +145,5 @@ int fam_sb_rec_fvf(uint32_t f);
 int fam_sb_rec_stream(uint32_t vb, uint32_t stride);
 int fam_sb_rec_ib(uint32_t ib, uint32_t base);
 uint32_t fam_vs_fvf(uint32_t handle);     /* FVF code for a SetVertexShader handle */
+void fam_apply_write_masks(void);
+void fam_texture_unbind_gl(uint32_t gl);

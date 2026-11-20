@@ -290,8 +290,12 @@ static void k_SystemTimeToFileTime(void) {               /* (&st, &ft) */
     RET(1, 2);
 }
 static int32_t tz_bias_s(void) {                         /* local - UTC, seconds */
+#ifdef __SWITCH__
+    return 0;                                            /* [familia-switch] newlib has no tm_gmtoff; the clock is UTC */
+#else
     time_t now = time(NULL); struct tm t; localtime_r(&now, &t);
     return (int32_t)t.tm_gmtoff;
+#endif
 }
 static void k_FileTimeToLocalFileTime(void) { put_ft(A32(1), get_ft(A32(0)) + (int64_t)tz_bias_s() * 10000000); RET(1, 2); }
 static void k_LocalFileTimeToFileTime(void) { put_ft(A32(1), get_ft(A32(0)) - (int64_t)tz_bias_s() * 10000000); RET(1, 2); }
@@ -772,7 +776,7 @@ static void k_CreateFileMappingA(void) {                 /* (hFile, sa, protect,
     RET(h, 6);
 }
 #define MAX_VIEWS 64
-static struct { uint32_t addr, len; } g_views[MAX_VIEWS];
+static struct { uint32_t addr, len; int fd; uint64_t off; int writeback; } g_views[MAX_VIEWS];
 static void k_MapViewOfFile(void) {                      /* (hMap, access, offHigh, offLow, bytes) */
     hmapping *m = (hmapping *)hle_handle_obj(A32(0), HLE_H_MAPPING);
     uint64_t off = (uint64_t)A32(2) << 32 | A32(3);
@@ -784,15 +788,39 @@ static void k_MapViewOfFile(void) {                      /* (hMap, access, offHi
      * it (a pagefile mapping is the reservation's own zeroed pages) */
     uint32_t va = hle_vm_reserve(0, (uint32_t)len);
     if (!va) { hle_set_last_error(8); RET(0, 5); }       /* ERROR_NOT_ENOUGH_MEMORY */
+#ifdef __SWITCH__
+    /* [familia-switch] no file mmap on Horizon: read the file into the view;
+     * a shared writable view is written back on UnmapViewOfFile. */
+    (void)prot;
+    if (m->fd >= 0) {
+        uint64_t avail = off < m->size ? m->size - off : 0, want = len < avail ? len : avail, got = 0;
+        while (got < want) {
+            ssize_t r = pread(m->fd, (uint8_t *)hle_ptr(va) + got, (size_t)(want - got), (off_t)(off + got));
+            if (r <= 0) break;
+            got += (uint64_t)r;
+        }
+    }
+    int writeback = m->fd >= 0 && m->writable && !copy;
+#else
     if (m->fd >= 0 && mmap(hle_ptr(va), len, prot, MAP_FIXED | (copy ? MAP_PRIVATE : MAP_SHARED), m->fd, (off_t)off) == MAP_FAILED) {
         hle_vm_release(va, (uint32_t)len); hle_set_last_error(8); RET(0, 5);
     }
-    for (int i = 0; i < MAX_VIEWS; i++) if (!g_views[i].addr) { g_views[i].addr = va, g_views[i].len = (uint32_t)len; break; }
+    int writeback = 0;
+#endif
+    for (int i = 0; i < MAX_VIEWS; i++) if (!g_views[i].addr) {
+        g_views[i].addr = va, g_views[i].len = (uint32_t)len;
+        g_views[i].fd = writeback ? dup(m->fd) : -1, g_views[i].off = off, g_views[i].writeback = writeback;
+        break;
+    }
     RET(va, 5);
 }
 static void k_UnmapViewOfFile(void) {
     for (int i = 0; i < MAX_VIEWS; i++)
         if (g_views[i].addr && g_views[i].addr == A32(0)) {
+            if (g_views[i].writeback && g_views[i].fd >= 0) {
+                if (pwrite(g_views[i].fd, hle_ptr(g_views[i].addr), g_views[i].len, (off_t)g_views[i].off) < 0) {}
+                close(g_views[i].fd);
+            }
             hle_vm_release(g_views[i].addr, g_views[i].len);
             g_views[i].addr = 0;
             RET(1, 1);

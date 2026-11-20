@@ -23,6 +23,9 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include "win32hle.h"
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
 
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
@@ -92,6 +95,30 @@ uint32_t hle_va_bad(const void *p) {
     return 0;
 }
 
+#ifdef __SWITCH__
+/* [familia-switch] Horizon has no mmap. The guest's 4 GB is a range of the
+ * process's alias region (64 GB on a 39-bit application), registered with
+ * libnx's virtmem so nothing else is placed there. Pages are backed on demand
+ * with svcMapPhysicalMemory (needs a system resource in the NPDM) and freed
+ * with svcUnmapPhysicalMemory; unbacked pages fault like PROT_NONE. */
+static void mem_init_once(void) {
+    g_host_page = 0x1000;
+    u64 alias_base = 0, alias_size = 0;
+    if (R_FAILED(svcGetInfo(&alias_base, InfoType_AliasRegionAddress, CUR_PROCESS_HANDLE, 0)) ||
+        R_FAILED(svcGetInfo(&alias_size, InfoType_AliasRegionSize, CUR_PROCESS_HANDLE, 0)) ||
+        alias_size < SPAN + 0x200000000ull)
+        hle_fatal("alias region too small for the guest's 4 GB (%#llx)", (unsigned long long)alias_size);
+    /* Middle of the region, 4 GB aligned: well away from either end. */
+    uint64_t base = (alias_base + alias_size / 2 - SPAN / 2 + SPAN - 1) & ~(SPAN - 1);
+    virtmemLock();
+    if (!virtmemAddReservation((void *)(uintptr_t)base, SPAN)) {
+        virtmemUnlock();
+        hle_fatal("cannot reserve the guest's 4 GB at %#llx", (unsigned long long)base);
+    }
+    virtmemUnlock();
+    g_mem_base = (ptrdiff_t)base;
+}
+#else
 static void mem_init_once(void) {
     g_host_page = (size_t)getpagesize();
     /* Nothing is accessible until reserved, page zero included: a guest NULL
@@ -114,6 +141,7 @@ static void mem_init_once(void) {
 #endif
     g_mem_base = (ptrdiff_t)p;
 }
+#endif
 void hle_mem_init(void) {
     static pthread_once_t once = PTHREAD_ONCE_INIT;
     pthread_once(&once, mem_init_once);
@@ -122,10 +150,28 @@ void hle_mem_init(void) {
 static uint8_t *host(uint32_t va) { return (uint8_t *)g_mem_base + va; }
 
 /* Fresh zero pages over [va, va+size), host-page aligned, with prot. */
+#ifdef __SWITCH__
+static int remap(uint32_t va, uint64_t size, int prot) {
+    /* Drop whatever is backed (fresh pages must read as zero, as on Linux),
+     * then back the range again if it is to be accessible. Unmapping a range
+     * that is only partly backed is allowed. */
+    Result rc = svcUnmapPhysicalMemory(host(va), size);
+    (void)rc;
+    if (!prot) return 0;
+    rc = svcMapPhysicalMemory(host(va), size);
+    if (R_FAILED(rc)) {
+        fprintf(stderr, "[win32hle] svcMapPhysicalMemory(%#x, %#llx) failed: %#x\n",
+                va, (unsigned long long)size, rc);
+        return -1;
+    }
+    return 0;
+}
+#else
 static int remap(uint32_t va, uint64_t size, int prot) {
     void *p = mmap(host(va), (size_t)size, prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | (prot ? 0 : MAP_NORESERVE), -1, 0);
     return p == (void *)host(va) ? 0 : -1;
 }
+#endif
 
 /* [familia] The table is searched by binary search and free space found next-fit from
  * a moving cursor: with thousands of live large blocks (texture levels, buffers) the
@@ -376,7 +422,13 @@ void hle_heap_trim(void) {
             uint32_t *h = (uint32_t *)host(va);
             if (h[3] == TRIM_MARK) continue;
             uint64_t lo = ((uint64_t)va + HDR + 4 + pg - 1) & ~(pg - 1), hi = ((uint64_t)va + sz) & ~(pg - 1);
-            if (hi > lo) { madvise(host((uint32_t)lo), (size_t)(hi - lo), MADV_DONTNEED); hle_mem_trimmed += hi - lo; }
+            if (hi > lo) {
+#ifdef __SWITCH__
+                remap((uint32_t)lo, hi - lo, PROT_READ | PROT_WRITE);   /* release, then fresh zero pages */
+#else
+                madvise(host((uint32_t)lo), (size_t)(hi - lo), MADV_DONTNEED);
+#endif
+                hle_mem_trimmed += hi - lo; }
             h[3] = TRIM_MARK;
         }
     }

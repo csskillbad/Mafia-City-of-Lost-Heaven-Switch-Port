@@ -288,6 +288,16 @@ static void pad_debug(void) {
 void fam_input_pump(void) {
     static int dbg = -1; if (dbg < 0) dbg = fam_config_int("paddbg", 0);
     if (dbg) pad_debug();
+#ifdef __SWITCH__
+    /* [familia-switch] docking changes the drawable (1280x720 <-> 1920x1080):
+     * follow it even if no window event arrives, so the 4:3 picture is always
+     * rendered at the panel's / TV's native resolution. */
+    if (g_dev.window) {
+        int dw = 0, dh = 0;
+        SDL_GL_GetDrawableSize(g_dev.window, &dw, &dh);
+        if (dw && dh && (dw != g_dev.drawable_w || dh != g_dev.drawable_h)) fam_update_output_rect();
+    }
+#endif
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {

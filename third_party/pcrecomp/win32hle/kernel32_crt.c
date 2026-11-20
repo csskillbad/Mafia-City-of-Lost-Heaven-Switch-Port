@@ -68,7 +68,16 @@ static void k_CreateThread(void) {             /* (sa, stack, start, param, flag
     a->tid = hle_thread_id_new();
     uint32_t h = hle_handle_alloc(HLE_H_THREAD, a);
     pthread_t t;
-    if (!h || pthread_create(&t, NULL, thread_trampoline, a) != 0) { if (h) hle_handle_close(h); free(a); RET(0, 6); }
+    pthread_attr_t *attr = NULL;
+#ifdef __SWITCH__
+    /* [familia-switch] translated code recurses on the host stack; libnx's
+     * default thread stack is far smaller than glibc's 8 MB. */
+    pthread_attr_t nx_attr;
+    pthread_attr_init(&nx_attr);
+    pthread_attr_setstacksize(&nx_attr, 4u << 20);
+    attr = &nx_attr;
+#endif
+    if (!h || pthread_create(&t, attr, thread_trampoline, a) != 0) { if (h) hle_handle_close(h); free(a); RET(0, 6); }
     pthread_detach(t);
     uint32_t ptid = A32(5); if (ptid) MEM32(ptid) = a->tid;
     RET(h, 6);

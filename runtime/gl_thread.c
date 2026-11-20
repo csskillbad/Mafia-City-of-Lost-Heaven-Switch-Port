@@ -263,7 +263,15 @@ void fam_glt_start(void) {
     if (real_rangebv) fam_glDrawRangeElementsBaseVertex = w_rangebv;
     SDL_GL_MakeCurrent(g_dev.window, NULL);
     fam_glt_on = 1;
+#ifdef __SWITCH__
+    {   /* [familia-switch] the driver (Mesa) runs on this thread: libnx's
+         * default stack is too small for it */
+        pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setstacksize(&at, 1u << 20);
+        pthread_create(&g_thr, &at, gl_thread, NULL);
+    }
+#else
     pthread_create(&g_thr, NULL, gl_thread, NULL);
+#endif
     fprintf(stderr, "[glthread] GL runs on its own thread (queue %u MiB)\n", QSIZE >> 20);
 }
 
