@@ -172,6 +172,7 @@ extern void (*hle_proc_hook)(uint32_t hwnd, uint32_t msg, uint32_t wParam, uint3
 extern volatile int hle_lbutton_reads;   /* GetKeyState/GetAsyncKeyState(VK_LBUTTON) calls so far */
 int         hle_is_window(uint32_t h);
 int         hle_window_screen_rect(uint32_t h, int *l, int *t, int *r, int *b);
+int         hle_window_client_size(uint32_t h, int *w, int *hh);   /* [familia] */
 const char *hle_window_class(uint32_t h);
 uint32_t    hle_window_parent(uint32_t h);
 uint32_t    hle_window_style(uint32_t h);

@@ -207,16 +207,25 @@ const char *hle_font_file(const char *face, int bold, int italic) {
     const char *family = "Liberation Sans", *style = bold && italic ? "Bold Italic" : bold ? "Bold" : italic ? "Italic" : "Regular";
     if (!strncasecmp(face, "Times", 5) || !strcasecmp(face, "MS Serif") || !strcasecmp(face, "Georgia")) family = "Liberation Serif";
     else if (!strncasecmp(face, "Courier", 7) || !strcasecmp(face, "Fixedsys") || !strcasecmp(face, "Terminal")) family = "Liberation Mono";
+#ifdef __SWITCH__
+    (void)style;
+    FILE *p = NULL;               /* [familia-switch] no fc-match: the NSP's RomFS has the Liberation fonts */
+#else
     char cmd[256];
     snprintf(cmd, sizeof cmd, "fc-match -f '%%{file}' '%s:style=%s' 2>/dev/null", family, style);
     FILE *p = popen(cmd, "r");
+#endif
     if (p) {
         size_t n = fread(path, 1, sizeof path - 1, p);
         pclose(p);
         path[n] = 0;
         if (n && access(path, R_OK) == 0) return path;
     }
-    static const char *const dirs[] = { "/usr/share/fonts/truetype/liberation/", "/usr/share/fonts/truetype/liberation2/",
+    static const char *const dirs[] = {
+#ifdef __SWITCH__
+                                        "romfs:/fonts/",
+#endif
+                                        "/usr/share/fonts/truetype/liberation/", "/usr/share/fonts/truetype/liberation2/",
                                         "/usr/share/fonts/liberation/", "/usr/share/fonts/liberation-sans/",
                                         "/usr/share/fonts/TTF/", "/usr/share/fonts/truetype/dejavu/" };
     char file[64];

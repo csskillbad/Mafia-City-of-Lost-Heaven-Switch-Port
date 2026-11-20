@@ -58,7 +58,20 @@ static void apply_texture_choice(void) {
     hle_reg_set_binary(HKLM, MAFIA_KEY, "LS3D_setup", b, sizeof b);
     fprintf(stderr, "[paths] textures: %s\n", want ? "32-bit" : "16-bit");
 }
+/* The Steam Game.exe reads LS3D_setup from HKEY_CURRENT_USER (0x5BEC5C),
+ * the retail 1.2 build from HKEY_LOCAL_MACHINE: keep both in step. */
+#define HKCU 0x80000001u
+static void mirror_setup_to_hkcu(void) {
+    uint8_t b[0x3F];
+    if (hle_reg_get_binary(HKLM, MAFIA_KEY, "LS3D_setup", b, sizeof b) == sizeof b)
+        hle_reg_set_binary(HKCU, MAFIA_KEY, "LS3D_setup", b, sizeof b);
+}
+static void seed_setup_config(void);
 void fam_seed_setup_config(void) {
+    seed_setup_config();
+    mirror_setup_to_hkcu();
+}
+static void seed_setup_config(void) {
     if (hle_reg_has(HKLM, MAFIA_KEY, "LS3D_setup")) { apply_texture_choice(); return; }
     uint8_t b[0x3F] = {0};
     b[0x00] = 0x14;                          /* layout version the game checks */

@@ -28,6 +28,7 @@ podman run --rm --security-opt label=disable -v "$root:/src" -w /src "$img" bash
   npdmtool switch/main.npdm.json \$s/exefs/main.npdm
   nacptool --create 'Mafia' 'The Familia (Switch port)' '$version' \$s/control/control.nacp --titleid=0100d3d001420000
   cp switch/icon.jpg \$s/control/icon_AmericanEnglish.dat
+  cp -r switch/romfs/. \$s/romfs/
   printf 'Game data is read from sdmc:/switch/mafia/data\n' > \$s/romfs/README.txt
 "
 

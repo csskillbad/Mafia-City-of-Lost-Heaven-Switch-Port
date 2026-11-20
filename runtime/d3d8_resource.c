@@ -12,6 +12,7 @@
 #include "gl_funcs.h"
 #include "d3d8_slots.h"
 #include "d3d8_internal.h"
+#include "familia.h"
 
 FAM_DEFINE_IFACE(Tex, IDirect3DTexture8, IDIRECT3DTEXTURE8)
 FAM_DEFINE_IFACE(Surf, IDirect3DSurface8, IDIRECT3DSURFACE8)
@@ -136,6 +137,8 @@ static void t_CreateTexture(void) {   /* dev (this, w, h, levels, usage, fmt, po
     t->touched = g_dev.frame;
     tex_link(t);
     MEM32(A32(7)) = t->obj;
+    {   static int tr = -1; if (tr < 0) tr = fam_config_int("textrace", 0);
+        if (tr) fprintf(stderr, "[tex] create %ux%u fmt %u levels %u usage 0x%X pool %u -> 0x%08X\n", w, h, fmt, lv, usage, pool, t->obj); }
     RET(D3D_OK, 8);
 }
 static void t_GetLevelDesc(void) {                   /* (this, level, desc*) */
@@ -157,6 +160,8 @@ static void t_GetSurfaceLevel(void) {                /* (this, level, surf**) */
     RET(D3D_OK, 3);
 }
 static void t_LockRect(void) {                       /* (this, level, D3DLOCKED_RECT*, RECT*, flags) */
+    {   static int tr = -1; if (tr < 0) tr = fam_config_int("textrace", 0);
+        if (tr) fprintf(stderr, "[tex] lock 0x%08X level %u flags 0x%X\n", A32(0), A32(1), A32(4)); }
     fam_texture *t = fam_texture_of(A32(0));
     uint32_t l = A32(1);
     if (l >= t->levels) RET(D3DERR_INVALIDCALL, 5);
@@ -210,6 +215,13 @@ static void upload_level(fam_texture *t, uint32_t l) {
     const uint8_t *src = hle_ptr(s->mem);
     uint32_t w = s->width, h = s->height, n = w * h;
     GLenum ifmt, fmt, type; const void *px = src;
+    {   /* FAMILIA_TEXDUMP=1: raw level-0 pixels of A4R4G4B4 textures (debug) */
+        static int td = -1; if (td < 0) td = fam_config_int("texdump", 0);
+        if (td && l == 0 && t->format == D3DFMT_A4R4G4B4 && w == 256 && h == 256) {
+            char path[512]; snprintf(path, sizeof path, "%s/tex_%08X.raw", fam_user_dir(), t->obj);
+            FILE *f = fopen(path, "wb"); if (f) { fwrite(src, 2, n, f); fclose(f); }
+        }
+    }
     switch (t->format) {
     case D3DFMT_A8R8G8B8: case D3DFMT_X8R8G8B8: {
         int x = t->format == D3DFMT_X8R8G8B8;

@@ -1647,6 +1647,13 @@ static void u_GetWindowContextHelpId(void) { RET(0, 1); }
 static void u_GetMenu(void) { win_t *x = W(A32(0)); RET(x ? x->menu : 0u, 1); }
 
 /* geometry */
+/* [familia] a window's client size (what GetClientRect reports) */
+int hle_window_client_size(uint32_t h, int *w, int *hh) {
+    win_t *x = W(h);
+    if (!x) return 0;
+    *w = x->w; *hh = x->h;
+    return 1;
+}
 static void u_GetClientRect(void) { win_t *x = W(A32(0)); if (!x) RET(0, 2); put_rect(A32(1), 0, 0, x->w, x->h); RET(1, 2); }
 static void u_GetWindowRect(void) {
     win_t *x = W(A32(0));

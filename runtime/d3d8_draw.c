@@ -604,6 +604,14 @@ void fam_gl_invalidate_caches(void) {
 }
 
 static prog *prepare(uint32_t fvf) {
+    {   static int skip = -1; if (skip < 0) skip = fam_config_int("skip2d", 0);   /* debug: drop pre-transformed draws */
+        if (skip && (fvf & 0xE) == 4) return NULL; }
+    static int opaque2d = -1; if (opaque2d < 0) opaque2d = fam_config_int("opaque2d", 0);   /* debug */
+    uint32_t sv_at = 0, sv_ab = 0;
+    if (opaque2d && (fvf & 0xE) == 4) {
+        sv_at = g_dev.rs[D3DRS_ALPHATESTENABLE]; sv_ab = g_dev.rs[D3DRS_ALPHABLENDENABLE];
+        g_dev.rs[D3DRS_ALPHATESTENABLE] = 0; g_dev.rs[D3DRS_ALPHABLENDENABLE] = 0; g_dev.state_dirty |= FAM_DIRTY_RS;
+    }
     prog *p = program_for(fvf);
     if (!p) return NULL;
     uint32_t d = g_dev.state_dirty;
@@ -616,7 +624,21 @@ static prog *prepare(uint32_t fvf) {
     apply_samplers(p->key.nstages);
     apply_uniforms(p);
     g_dev.state_dirty = 0;
+    if (opaque2d && (fvf & 0xE) == 4) {
+        g_dev.rs[D3DRS_ALPHATESTENABLE] = sv_at; g_dev.rs[D3DRS_ALPHABLENDENABLE] = sv_ab; g_dev.state_dirty |= FAM_DIRTY_RS;
+    }
     g_draw_stats.draws++;
+    {   /* FAMILIA_DRAWTRACE=N: log every draw of frames N and N+1 */
+        static int tr = -2; if (tr == -2) tr = fam_config_int("drawtrace", -1);
+        if (tr >= 0 && g_dev.frame >= (uint32_t)tr && g_dev.frame <= (uint32_t)tr + 1) {
+            const uint32_t *rs = g_dev.rs, *t0 = g_dev.tss[0];
+            const uint32_t *t1 = g_dev.tss[1];
+            fprintf(stderr, "[draw] f%u fvf 0x%X tex0 0x%08X blend %u %u/%u atest %u ref %u func %u z %u/%u zw %u cull %u tf 0x%08X c0 op%u %u,%u a0 op%u %u,%u | tex1 0x%08X c1 op%u %u,%u a1 op%u %u,%u | nstages %u fog %u spec %u\n",
+                    g_dev.frame, fvf, g_dev.tex[0], rs[0x1B], rs[0x13], rs[0x14], rs[0x0F], rs[0x18], rs[0x19], rs[0x07], rs[0x17], rs[0x0E], rs[0x16], rs[0x3C],
+                    t0[1], t0[2], t0[3], t0[4], t0[5], t0[6], g_dev.tex[1], t1[1], t1[2], t1[3], t1[4], t1[5], t1[6],
+                    (unsigned)p->key.nstages, rs[0x1C], rs[0x1D]);
+        }
+    }
     return p;
 }
 
@@ -644,12 +666,26 @@ static long stream_vertices(const prog *p, uint32_t fvf, uint32_t stride, const 
     return -1;
 }
 
+/* FAMILIA_DRAWTRACE: the first vertices of pre-transformed draws (debug) */
+static void trace_tl_verts(const char *api, uint32_t fvf, const uint8_t *v, uint32_t stride, uint32_t n) {
+    static int tr = -2; if (tr == -2) tr = fam_config_int("drawtrace", -1);
+    if (tr < 0 || g_dev.frame < (uint32_t)tr || g_dev.frame > (uint32_t)tr + 1 || (fvf & 0xE) != 4 || !v || !stride) return;
+    fprintf(stderr, "[vtx] %s n=%u stride=%u\n", api, n, stride);
+    for (uint32_t i = 0; i < n && i < 4; i++) {
+        const float *f = (const float *)(v + (size_t)i * stride);
+        uint32_t c = 0; memcpy(&c, v + (size_t)i * stride + 16, 4);
+        fprintf(stderr, "[vtx]   %u: x %.1f y %.1f z %.4f rhw %.4f diffuse 0x%08X uv %.3f,%.3f\n", i, f[0], f[1], f[2], f[3], c,
+                stride >= 32 ? *(const float *)(v + (size_t)i * stride + stride - 8) : 0.f,
+                stride >= 32 ? *(const float *)(v + (size_t)i * stride + stride - 4) : 0.f);
+    }
+}
 static void d_DrawPrimitive(void) {                  /* (this, type, startVertex, primCount) */
     uint32_t n; GLenum m = prim(A32(1), A32(3), &n);
     fam_buffer *vb = fam_buffer_of(g_dev.stream_vb);
     prog *p = vb ? prepare(fam_vs_fvf(g_dev.fvf)) : NULL;
     if (p && n) {
         uint32_t fvf = fam_vs_fvf(g_dev.fvf), gl = fam_buffer_gl(vb, GL_ARRAY_BUFFER);
+        trace_tl_verts(gl ? "DP/glbuf" : "DP/client", fvf, (const uint8_t *)hle_ptr(vb->mem) + (size_t)A32(2) * g_dev.stream_stride, g_dev.stream_stride, n);
         if (gl) {
             fam_bind_array(gl);
             bind_attribs(p, fvf, g_dev.stream_stride, (const uint8_t *)0 + (size_t)A32(2) * g_dev.stream_stride);
@@ -687,6 +723,7 @@ static void d_DrawIndexedPrimitive(void) {           /* (this, type, minIndex, n
         GLenum it = i32 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT;
         uint32_t fvf = fam_vs_fvf(g_dev.fvf), gl = fam_buffer_gl(vb, GL_ARRAY_BUFFER);
         uint32_t minI = A32(2), numV = A32(3);
+        trace_tl_verts(gl ? "DIP/glbuf" : "DIP/client", fvf, (const uint8_t *)hle_ptr(vb->mem) + ((size_t)g_dev.base_vertex + minI) * g_dev.stream_stride, g_dev.stream_stride, numV);
         if (gl) {
             fam_bind_array(gl);
             bind_attribs(p, fvf, g_dev.stream_stride, (const uint8_t *)0 + (size_t)g_dev.base_vertex * g_dev.stream_stride);
@@ -730,10 +767,12 @@ static void d_DrawIndexedPrimitive(void) {           /* (this, type, minIndex, n
     }
     RET(D3D_OK, 6);
 }
+
 static void d_DrawPrimitiveUP(void) {                /* (this, type, primCount, data, stride) */
     uint32_t n; GLenum m = prim(A32(1), A32(2), &n);
     prog *p = prepare(fam_vs_fvf(g_dev.fvf));
     if (p && n) {
+        trace_tl_verts("DPUP", fam_vs_fvf(g_dev.fvf), (const uint8_t *)hle_ptr(A32(3)), A32(4), n);
         long bv = stream_vertices(p, fam_vs_fvf(g_dev.fvf), A32(4), (const uint8_t *)hle_ptr(A32(3)), 0, n);
         glDrawArrays(m, bv >= 0 ? (GLint)bv : 0, (GLsizei)n);
         g_draw_stats.prims += A32(2);
@@ -749,6 +788,7 @@ static void d_DrawIndexedPrimitiveUP(void) {  /* (this, type, minIndex, numVerts
         GLenum it = i32 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT;
         uint32_t minI = A32(2), numV = A32(3);
         const uint8_t *vsrc = (const uint8_t *)hle_ptr(A32(7));
+        trace_tl_verts("DIPUP", fam_vs_fvf(g_dev.fvf), vsrc + (size_t)minI * A32(8), A32(8), numV);
         if (fam_stream_on()) fam_stream_need(numV * (A32(8) ? A32(8) : 64) + n * (i32 ? 4 : 2) + 2 * A32(8));
         long bv = numV ? stream_vertices(p, fam_vs_fvf(g_dev.fvf), A32(8), vsrc, minI, numV) : -1;
         if (bv < 0 && !numV) { fam_bind_array(0); bind_attribs(p, fam_vs_fvf(g_dev.fvf), A32(8), vsrc); }

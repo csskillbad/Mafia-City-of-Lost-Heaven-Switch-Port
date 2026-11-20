@@ -20,7 +20,7 @@ INCS    := -Iswitch/compat -I$(PC)/recomp32 -I$(PC)/win32hle -Iruntime \
 # No RECOMP_MEM_BASE: Horizon decides where the guest's 4 GB lives, so the
 # lift adds the runtime g_mem_base (recomp_types.h).
 CFLAGS  := $(ARCH) $(OPT) -g1 -ffunction-sections -fno-strict-aliasing -fwrapv $(DEFS) $(INCS)
-GENFLAGS := $(CFLAGS) -w -DRECOMP_LOCAL_REGS -DRECOMP_NONVOLATILE_MEM
+GENFLAGS := $(CFLAGS) -w -DRECOMP_LOCAL_REGS -DRECOMP_NONVOLATILE_MEM -include switch/compat/gen_compat.h
 # threadCreate is wrapped (nx_platform.c) to spread threads over the cores.
 LDFLAGS := -specs=$(DEVKITPRO)/libnx/switch.specs $(ARCH) -Wl,-Map,$(TARGET).map -Wl,--wrap=threadCreate
 LIBS    := -L$(PORTLIBS)/lib -L$(DEVKITPRO)/libnx/lib \
@@ -41,14 +41,15 @@ OBJS := $(call obj,$(HLE_SRC)) $(call obj,$(RT_SRC)) $(call obj,$(NX_SRC)) $(cal
 all: $(TARGET).nro
 platform: $(call obj,$(HLE_SRC)) $(call obj,$(RT_SRC)) $(call obj,$(NX_SRC))
 
+# Mesa is C++: link with g++ for libstdc++
 $(TARGET).elf: $(OBJS)
-	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
+	$(CXX) $(LDFLAGS) -o $@ $^ $(LIBS) -lstdc++
 
 $(TARGET).nacp:
 	nacptool --create "Mafia" "The Familia" "0.1.0" $@
 
 $(TARGET).nro: $(TARGET).elf $(TARGET).nacp
-	elf2nro $< $@ --nacp=$(TARGET).nacp --icon=switch/icon.jpg
+	elf2nro $< $@ --nacp=$(TARGET).nacp --icon=switch/icon.jpg --romfsdir=switch/romfs
 
 $(OUT)/$(GEN)/%.o: $(GEN)/%.c
 	@mkdir -p $(dir $@)

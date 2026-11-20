@@ -173,6 +173,26 @@ static void d_CreateDevice(void) {   /* (this, adapter, type, hwnd, behavior, pp
     fprintf(stderr, "[d3d8] CreateDevice %ux%u fmt %u count %u windowed %u autodepth %u/%u flags 0x%X behavior 0x%X\n",
             pp->BackBufferWidth, pp->BackBufferHeight, pp->BackBufferFormat, pp->BackBufferCount,
             pp->Windowed, pp->EnableAutoDepthStencil, pp->AutoDepthStencilFormat, pp->Flags, A32(4));
+    if (!pp->BackBufferWidth || !pp->BackBufferHeight) {
+        /* D3D8: a zero size (windowed) means the window's client area; without
+         * a window, the desktop mode (854x480 when FAMILIA_WIDESCREEN). */
+        uint32_t hw = A32(3) ? A32(3) : pp->hDeviceWindow;
+        int cw = 0, ch = 0;
+        if (hw && hle_window_client_size(hw, &cw, &ch) && cw >= 320 && ch >= 240) {
+            pp->BackBufferWidth = (uint32_t)cw; pp->BackBufferHeight = (uint32_t)ch;
+            /* win32hle windows have no non-client area: a window a frame's
+             * worth larger than a display mode is that mode plus its borders */
+            for (size_t i = 0; i < NMODES; i++)
+                if ((uint32_t)cw >= k_modes[i].w && (uint32_t)cw - k_modes[i].w <= 16 &&
+                    (uint32_t)ch >= k_modes[i].h && (uint32_t)ch - k_modes[i].h <= 40) {
+                    pp->BackBufferWidth = k_modes[i].w; pp->BackBufferHeight = k_modes[i].h;
+                    break;
+                }
+        } else {
+            pp->BackBufferWidth = fam_config_int("widescreen", 1) ? 854u : 640u; pp->BackBufferHeight = 480u;
+        }
+        fprintf(stderr, "[d3d8] windowed back buffer %ux%u\n", pp->BackBufferWidth, pp->BackBufferHeight);
+    }
     if (window_and_context(pp) != 0) RET(D3DERR_NOTAVAILABLE, 7);
     if (!pp->BackBufferWidth)  pp->BackBufferWidth = (uint32_t)g_dev.bb_w;
     if (!pp->BackBufferHeight) pp->BackBufferHeight = (uint32_t)g_dev.bb_h;

@@ -235,6 +235,9 @@ void fam_native_dta_open(void) {
     const char *name = (const char *)ADDR(MEM32(g_esp + 4));
     char nm[160]; snprintf(nm, sizeof nm, "%s", name ? name : "");
     recomp_rw_data_110018A0_orig();
+    static int trace = -1;
+    if (trace < 0) trace = fam_config_int("dtatrace", 0);
+    if (trace) fprintf(stderr, "[dta] open \"%s\" -> %s\n", nm, (int32_t)g_eax == -1 ? "MISSING" : "ok");
     const char *m = strcasestr(nm, "missions");                /* ...missions\<name>\scene2.bin */
     if (!m || (m[8] != '\\' && m[8] != '/')) return;
     const char *base = strrchr(nm, '\\'), *b2 = strrchr(nm, '/');

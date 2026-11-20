@@ -94,6 +94,9 @@ static const char k_default_config[] =
     "WIDESCREEN=1\n"
     "# 1 = spread threads over the CPU cores (game / GL driver / sound)\n"
     "PIN=1\n"
+    "# 1 = stream vertex/index data through a persistent GPU ring (faster, and\n"
+    "#     needed for the game's text: Mesa drops its client-side indexed draws)\n"
+    "STREAM=1\n"
     "# 1 = FPS counter in the top-left corner, 0 = off\n"
     "FPS=1\n"
     "# right-stick look speed (TheFamilia default 30)\n"
@@ -127,7 +130,9 @@ static void nx_load_config(const char *path) {
         while (end > v && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' ')) *--end = 0;
         char *kend = eq;
         while (kend > p && kend[-1] == ' ') *--kend = 0;
+        /* HLE_* keys (win32hle diagnostics such as HLE_TRACE) are set as-is */
         char env[96] = "FAMILIA_";
+        if (!strncmp(p, "HLE_", 4)) env[0] = 0;
         size_t i = strlen(env);
         for (char *k = p; *k && i < sizeof env - 1; k++) env[i++] = (char)((*k >= 'a' && *k <= 'z') ? *k - 32 : *k);
         env[i] = 0;
@@ -137,6 +142,7 @@ static void nx_load_config(const char *path) {
 }
 
 int main(int argc, char **argv) {
+    romfsInit();                  /* fonts for the game's GDI text (Liberation, SIL OFL) */
     mkdir(NX_ROOT, 0755);
     mkdir(NX_ROOT "/userdata", 0755);
     /* stderr is the port's log, as log.txt is on PortMaster */
@@ -165,6 +171,10 @@ int main(int argc, char **argv) {
     nx_setenv_default("FAMILIA_USER_DIR", NX_ROOT "/userdata");
     /* No OS page cache on Horizon: the Linux read-ahead would only cost I/O */
     nx_setenv_default("FAMILIA_READAHEAD", "0");
+    /* GPU streaming ring: on the Switch's Mesa (nouveau) it has none of the
+     * Mali driver's leak, and the game's indexed client-memory 2D draws (all
+     * text) only render through it */
+    nx_setenv_default("FAMILIA_STREAM", "1");
     fprintf(stderr, "[nx] The Familia (Switch) starting\n");
     AppletOperationMode mode = appletGetOperationMode();
     fprintf(stderr, "[nx] %s mode\n", mode == AppletOperationMode_Console ? "docked (1080p)" : "handheld (720p)");
@@ -174,6 +184,7 @@ int main(int argc, char **argv) {
     int rc = familia_main(argc, argv);
     appletSetCpuBoostMode(ApmCpuBoostMode_Normal);
     fprintf(stderr, "[nx] exit %d\n", rc);
+    romfsExit();
     return rc;
 }
 
@@ -190,3 +201,46 @@ time_t timegm(struct tm *tm) {
     return (time_t)(days * 86400 + tm->tm_hour * 3600 + tm->tm_min * 60 + tm->tm_sec);
 }
 int setpriority(int which, id_t who, int prio) { (void)which; (void)who; (void)prio; return 0; }
+
+/* ---- POSIX calls newlib/libnx do not provide ------------------------- */
+#include <fcntl.h>
+#include <pthread.h>
+#include <unistd.h>
+static pthread_mutex_t g_pio_lock = PTHREAD_MUTEX_INITIALIZER;
+/* pread/pwrite as seek + read/write + seek back, serialised */
+ssize_t pread(int fd, void *buf, size_t n, off_t off) {
+    pthread_mutex_lock(&g_pio_lock);
+    off_t cur = lseek(fd, 0, SEEK_CUR);
+    ssize_t r = -1;
+    if (cur >= 0 && lseek(fd, off, SEEK_SET) == off) {
+        r = read(fd, buf, n);
+        lseek(fd, cur, SEEK_SET);
+    }
+    pthread_mutex_unlock(&g_pio_lock);
+    return r;
+}
+ssize_t pwrite(int fd, const void *buf, size_t n, off_t off) {
+    pthread_mutex_lock(&g_pio_lock);
+    off_t cur = lseek(fd, 0, SEEK_CUR);
+    ssize_t r = -1;
+    if (cur >= 0 && lseek(fd, off, SEEK_SET) == off) {
+        r = write(fd, buf, n);
+        lseek(fd, cur, SEEK_SET);
+    }
+    pthread_mutex_unlock(&g_pio_lock);
+    return r;
+}
+/* SetFileTime: file times are not settable on the SD card here */
+struct timespec;
+int futimens(int fd, const struct timespec times[2]) { (void)fd; (void)times; return 0; }
+/* gdidc.c asks fc-match for a font file: no processes on Horizon */
+FILE *popen(const char *cmd, const char *mode) { (void)cmd; (void)mode; errno = ENOSYS; return NULL; }
+int pclose(FILE *f) { (void)f; return -1; }
+long sysconf(int name) {
+    switch (name) {
+    case _SC_PAGESIZE: return 0x1000;
+    case _SC_NPROCESSORS_CONF: case _SC_NPROCESSORS_ONLN: return 3;   /* application cores */
+    case _SC_CLK_TCK: return 100;
+    default: errno = EINVAL; return -1;
+    }
+}
