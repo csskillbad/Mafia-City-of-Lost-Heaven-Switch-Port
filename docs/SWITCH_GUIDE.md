@@ -22,7 +22,7 @@ Linux), and installs it on a Switch running custom firmware.
 ## 1. Get the source
 
 ```sh
-git clone --recursive https://github.com/csskillbad/TheFamilia-Switch
+git clone --recursive https://github.com/csskillbad/Mafia-City-of-Lost-Heaven-Switch-Port
 ```
 
 `--recursive` also fetches PCRecomp (the x86 translator, pinned version) into

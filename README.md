@@ -1,4 +1,4 @@
-# The Familia for Nintendo Switch
+# Mafia: The City of Lost Heaven - Switch Port (unofficial)
 
 *Mafia: The City of Lost Heaven* (PC, 2002, version 1.2) running **natively on a
 Nintendo Switch** with custom firmware. The game's own x86 code is statically
@@ -18,8 +18,8 @@ by Aleksandr Petruhin (MIT license), which runs Mafia on ARM64 Linux handhelds.
 builder (Windows and Linux), installing, settings and troubleshooting.
 
 ```sh
-git clone --recursive https://github.com/csskillbad/TheFamilia-Switch
-cd TheFamilia-Switch
+git clone --recursive https://github.com/csskillbad/Mafia-City-of-Lost-Heaven-Switch-Port
+cd Mafia-City-of-Lost-Heaven-Switch-Port
 ./build_nsp_gui.sh          # Windows: double-click build_nsp_gui.bat
 ```
 
