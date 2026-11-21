@@ -15,3 +15,7 @@ enum { FAM_PB_A, FAM_PB_B, FAM_PB_X, FAM_PB_Y, FAM_PB_LB, FAM_PB_RB, FAM_PB_BACK
 typedef struct { int32_t lx, ly, rx, ry, lt, rt; uint32_t buttons; } fam_pad;
 int  fam_pad_present(void);
 void fam_pad_read(fam_pad *p);            /* consumes the latched presses */
+uint32_t fam_pad_buttons(void);          /* the buttons held now, FAM_PB_* bits */
+void fam_input_swallow(void);             /* the buttons held now are ignored until released */
+void fam_input_movie(int on);             /* a video plays: the controller makes no keys */
+int  fam_input_tapped(void);              /* the touch screen was tapped since the last call */

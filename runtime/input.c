@@ -87,7 +87,11 @@ static uint32_t vk_of_dik(uint8_t d) {
     return 0;
 }
 
+static int g_keydbg = -1;                           /* FAMILIA_KEYDBG=1: log the keys the engine sends the game */
 static void key_event(uint8_t dik, int down) {
+    if (g_keydbg < 0) g_keydbg = fam_config_int("keydbg", 0);
+    if (g_keydbg) fprintf(stderr, "[keydbg] dik %02X %s vk %02X hwnd %08X menu %08X\n", dik, down ? "down" : "up",
+                          vk_of_dik(dik), g_dev.hwnd, MEM32(0x6BD890u));
     unsigned n = (g_qt - g_qh) & 255;
     if (n == 255) g_qh++;                        /* overload: drop the oldest */
     g_q[g_qt & 255] = (fam_key_event){ dik, (uint8_t)down, SDL_GetTicks(), g_seq++ };
@@ -201,13 +205,29 @@ static uint32_t pad_bit_of(int sdl_button) {
 #define TRIGGER_ON 12000
 /* g_pad_latch: buttons pressed since the game last read them; g_pad_latch_engine: the same for
  * the engine's own keys below; g_pad_script: buttons the input script holds */
+/* g_swallow: buttons ignored until released (the press that skipped a video
+ * or confirmed the system keyboard must not also act in the menu after it);
+ * g_movie: a video plays, the controller makes no keys */
+static uint32_t g_swallow;
+static int g_movie;
 static uint32_t pad_held(void) {
-    if (!g_pad) return g_pad_script;
     uint32_t b = g_pad_script;
-    for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; i++) if (SDL_GameControllerGetButton(g_pad, (SDL_GameControllerButton)i)) b |= pad_bit_of(i);
-    if (SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > TRIGGER_ON) b |= 1u << FAM_PB_LT;
-    if (SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > TRIGGER_ON) b |= 1u << FAM_PB_RT;
-    return b;
+    if (g_pad) {
+        for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; i++) if (SDL_GameControllerGetButton(g_pad, (SDL_GameControllerButton)i)) b |= pad_bit_of(i);
+        if (SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > TRIGGER_ON) b |= 1u << FAM_PB_LT;
+        if (SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > TRIGGER_ON) b |= 1u << FAM_PB_RT;
+    }
+    g_swallow &= b;
+    return b & ~g_swallow;
+}
+void fam_input_swallow(void) {
+    g_swallow = 0;
+    g_swallow = pad_held();
+    g_pad_latch = g_pad_latch_engine = 0;
+}
+void fam_input_movie(int on) {
+    g_movie = on;
+    if (!on) fam_input_swallow();
 }
 /* a stick with a radial dead zone, rescaled to -10000..10000 */
 static void stick(SDL_GameControllerAxis ax, SDL_GameControllerAxis ay, int32_t *ox, int32_t *oy) {
@@ -218,6 +238,8 @@ static void stick(SDL_GameControllerAxis ax, SDL_GameControllerAxis ay, int32_t 
     *ox = (int32_t)(x * k * 10000.f); *oy = (int32_t)(y * k * 10000.f);
 }
 int fam_pad_present(void) { return g_pad != NULL; }
+/* the controller's buttons held now (FAM_PB_* bits), for the video player's skip */
+uint32_t fam_pad_buttons(void) { return pad_held(); }
 void fam_pad_read(fam_pad *p) {
     memset(p, 0, sizeof *p);
     if (!g_pad && !g_pad_script) return;
@@ -227,7 +249,7 @@ void fam_pad_read(fam_pad *p) {
     p->rt = SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) * 10000 / 32767;
     if (g_pad_script & (1u << FAM_PB_LT)) p->lt = 10000;             /* scripted triggers are pulled fully */
     if (g_pad_script & (1u << FAM_PB_RT)) p->rt = 10000;
-    p->buttons = pad_held() | g_pad_latch;           /* a tap between two polls still counts once */
+    p->buttons = (pad_held() | g_pad_latch) & ~g_swallow;   /* a tap between two polls still counts once */
     g_pad_latch = 0;
 }
 /* whether the game shows a menu (main menu, pause menu, loading) rather than play */
@@ -238,8 +260,9 @@ static int in_menu(void) {
 }
 static void pad_update(void) {
     if (!g_pad) return;
-    uint32_t b = pad_held() | g_pad_latch_engine;
+    uint32_t b = (pad_held() | g_pad_latch_engine) & ~g_swallow;
     g_pad_latch_engine = 0;
+    if (g_movie) b = 0;                                /* the video player reads the buttons itself */
     uint8_t want[256] = {0};
     if (b & (1u << FAM_PB_START)) want[0x01] = 0x80;                 /* Start: Esc */
     if (in_menu()) {
@@ -253,6 +276,16 @@ static void pad_update(void) {
         if ((b & (1u << FAM_PB_RIGHT)) || lx > 5000) want[0xCD] = 0x80;
     }
     for (int k = 0; k < 256; k++) if (want[k] != g_kb_pad[k]) set_key(g_kb_pad, (uint8_t)k, want[k] != 0);
+    if (g_keydbg < 0) g_keydbg = fam_config_int("keydbg", 0);
+    if (g_keydbg > 0) {                                /* the menu and its active component, twice a second */
+        static uint32_t last_dbg; uint32_t t = SDL_GetTicks();
+        uint32_t menu = MEM32(GAME_MENU), act = menu ? MEM32(menu + 0xC) : 0;
+        if (t - last_dbg >= 500) {
+            last_dbg = t;
+            fprintf(stderr, "[keydbg] menu %08X active %08X id %X flags %08X | pad %08X in_menu %d\n", menu, act,
+                    act ? MEM32(act + 4) : 0, act ? MEM32(act + 8) : 0, b, in_menu());
+        }
+    }
     /* right stick -> mouse motion, by time: FAMILIA_LOOK_SENS percent of 1500 px/s at full tilt */
     static int look = -1; static uint64_t last;
     if (look < 0) look = fam_config_int("look_sens", 30);
@@ -286,6 +319,53 @@ static void pad_debug(void) {
     }
     if (game) { float pp[3]; memcpy(pp, hle_ptr(game + 0x2A10), 12); fprintf(stderr, " | pos %.1f %.1f %.1f", pp[0], pp[1], pp[2]); }
     fprintf(stderr, "\n");
+}
+
+/* ---- the touch screen (handheld): a tap in a menu clicks there ----
+ * The menu's cursor (GM_Menu::mouseX/Y, back-buffer pixels) goes to the
+ * finger and the menu is told the mouse is in use, so the item under it
+ * becomes the active one; the left button follows a moment later, so the
+ * same tap also clicks it. Outside menus the screen does nothing. */
+#define MENU_MOUSE_IN_USE 0x6BD894u
+#define MENU_MOUSE_X      0x6BD8A0u
+#define MENU_MOUSE_Y      0x6BD8A4u
+#define TOUCH_DELAY_MS    60
+static struct { uint32_t down_at, pressed_at; int finger, up; } g_touch;
+static void touch_move(float fx, float fy) {
+    if (!g_dev.out_w || !g_dev.out_h || !g_dev.bb_w || !g_dev.bb_h) return;
+    int top = g_dev.drawable_h - (g_dev.out_y + g_dev.out_h);
+    int x = (int)((fx * g_dev.drawable_w - g_dev.out_x) * g_dev.bb_w / g_dev.out_w);
+    int y = (int)((fy * g_dev.drawable_h - top) * g_dev.bb_h / g_dev.out_h);
+    x = x < 0 ? 0 : x >= g_dev.bb_w ? g_dev.bb_w - 1 : x;
+    y = y < 0 ? 0 : y >= g_dev.bb_h ? g_dev.bb_h - 1 : y;
+    MEM32(MENU_MOUSE_X) = (uint32_t)x; MEM32(MENU_MOUSE_Y) = (uint32_t)y;
+    MEM8(MENU_MOUSE_IN_USE) = 1;
+}
+static int g_tapped;                                    /* a finger came down: the video player's skip */
+int fam_input_tapped(void) { int t = g_tapped; g_tapped = 0; return t; }
+static void touch_event(const SDL_Event *e) {
+    if (e->type == SDL_FINGERDOWN) g_tapped = 1;
+    if (e->type == SDL_FINGERDOWN) {
+        if (!MEM32(GAME_MENU) || g_touch.down_at) return;            /* menus only, one finger */
+        g_touch.finger = (int)e->tfinger.fingerId; g_touch.up = 0; g_touch.pressed_at = 0;
+        g_touch.down_at = SDL_GetTicks(); if (!g_touch.down_at) g_touch.down_at = 1;
+        touch_move(e->tfinger.x, e->tfinger.y);
+    } else if (g_touch.down_at && (int)e->tfinger.fingerId == g_touch.finger) {
+        if (MEM32(GAME_MENU)) touch_move(e->tfinger.x, e->tfinger.y);
+        if (e->type == SDL_FINGERUP) g_touch.up = 1;
+    }
+}
+static void touch_update(void) {
+    if (!g_touch.down_at) return;
+    uint32_t now = SDL_GetTicks();
+    if (!g_touch.pressed_at && now - g_touch.down_at >= TOUCH_DELAY_MS) {
+        g_touch.pressed_at = now;
+        g_mouse.pad_buttons |= 1; g_mouse_latch |= 1;
+    }
+    if (g_touch.up && g_touch.pressed_at && now - g_touch.pressed_at >= TOUCH_DELAY_MS) {
+        g_mouse.pad_buttons &= (uint8_t)~1;
+        memset(&g_touch, 0, sizeof g_touch);
+    }
 }
 
 void fam_input_pump(void) {
@@ -322,8 +402,12 @@ void fam_input_pump(void) {
         case SDL_TEXTINPUT:
             if (g_dev.hwnd) for (const char *c = e.text.text; *c; c++) if ((unsigned char)*c < 0x80) hle_post_message(g_dev.hwnd, WM_CHAR, (uint8_t)*c, 1);
             break;
-        case SDL_MOUSEMOTION: g_mouse.acc_x += (float)e.motion.xrel; g_mouse.acc_y += (float)e.motion.yrel; break;
+        case SDL_FINGERDOWN: case SDL_FINGERUP: case SDL_FINGERMOTION: touch_event(&e); break;
+        case SDL_MOUSEMOTION:
+            if (e.motion.which == SDL_TOUCH_MOUSEID) break;   /* SDL's mouse made from the touch screen: handled above */
+            g_mouse.acc_x += (float)e.motion.xrel; g_mouse.acc_y += (float)e.motion.yrel; break;
         case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: {
+            if (e.button.which == SDL_TOUCH_MOUSEID) break;
             int b = e.button.button == SDL_BUTTON_LEFT ? 0 : e.button.button == SDL_BUTTON_RIGHT ? 1 : e.button.button == SDL_BUTTON_MIDDLE ? 2 : -1;
             if (b >= 0) { if (e.type == SDL_MOUSEBUTTONDOWN) g_mouse.real_buttons |= (uint8_t)(1 << b), g_mouse_latch |= (uint8_t)(1 << b); else g_mouse.real_buttons &= (uint8_t)~(1 << b); }
             break;
@@ -350,6 +434,7 @@ void fam_input_pump(void) {
         }
     }
     pad_update();
+    touch_update();
     if (g_nscript) script_update();
 }
 

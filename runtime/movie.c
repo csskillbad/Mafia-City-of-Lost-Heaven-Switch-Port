@@ -116,11 +116,16 @@ static void draw_frame(const uint8_t *rgba, int w, int h, int band) {
     present();
 }
 
+/* Esc, Enter or Space, as on the PC, or on the controller A, B, X, Y, Start
+ * (+) or Back (-), whether or not the engine maps them to keys right now, or
+ * a tap on the touch screen */
+#define SKIP_BUTTONS ((1u << FAM_PB_A) | (1u << FAM_PB_B) | (1u << FAM_PB_X) | (1u << FAM_PB_Y) | \
+                      (1u << FAM_PB_START) | (1u << FAM_PB_BACK))
 static int skip_pressed(void) {
     fam_input_pump();
     uint8_t keys[256];
     fam_input_keys(keys);
-    return (keys[0x01] | keys[0x1C] | keys[0x39]) & 0x80;    /* Esc, Enter, Space */
+    return ((keys[0x01] | keys[0x1C] | keys[0x39]) & 0x80) || (fam_pad_buttons() & SKIP_BUTTONS) || fam_input_tapped();
 }
 
 /* plays one file; returns 0 if it could not be opened */
@@ -175,6 +180,8 @@ static int play_file(const char *path, float sx, float sy) {
     uint64_t t0 = SDL_GetTicks64();
     double tb = av_q2d(fmt->streams[vi]->time_base);
     int skipped = 0, held = 0;
+    fam_input_init();
+    fam_input_movie(1);
     int16_t *pcm = NULL; int pcm_cap = 0;
     while (!skipped && av_read_frame(fmt, pkt) >= 0) {
         if (pkt->stream_index == ai && ac && sid >= 0) {
@@ -209,8 +216,10 @@ static int play_file(const char *path, float sx, float sy) {
             SDL_Delay(5);
         }
     }
+    if (skipped) fprintf(stderr, "[movie] %s: skipped\n", path);
     /* let the last of the sound play unless skipped */
     while (!skipped && sid >= 0 && hle_audio_stream_queued(sid) > 0) { if (skip_pressed() && held) break; SDL_Delay(10); }
+    fam_input_movie(0);                       /* and a button still held from the skip stays out of the menu */
     if (sid >= 0) hle_audio_stream_close(sid);
     av_frame_free(&fr); av_packet_free(&pkt);
     sws_freeContext(sws); swr_free(&swr); free(rgba); free(pcm);
