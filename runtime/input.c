@@ -203,6 +203,33 @@ static uint32_t pad_bit_of(int sdl_button) {
     return 0;
 }
 #define TRIGGER_ON 12000
+/* the controller as read at the last pump: held buttons, sticks (SDL axis
+ * range, y down) and triggers. On the Switch it comes from HID (switch/nx_pad.c),
+ * elsewhere from the SDL game controller. */
+static struct { int on; uint32_t buttons; int16_t ax[4]; int lt, rt; } g_raw;
+#ifdef __SWITCH__
+int nx_pad_poll(uint32_t *buttons, int16_t axes[4], int *lt, int *rt);
+#endif
+static void raw_poll(void) {
+    uint32_t before = g_raw.buttons;
+    memset(&g_raw, 0, sizeof g_raw);
+#ifdef __SWITCH__
+    if (g_pad_on) { nx_pad_poll(&g_raw.buttons, g_raw.ax, &g_raw.lt, &g_raw.rt); g_raw.on = 1; }   /* present even before one connects */
+#else
+    if (g_pad) {
+        g_raw.on = 1;
+        for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; i++) if (SDL_GameControllerGetButton(g_pad, (SDL_GameControllerButton)i)) g_raw.buttons |= pad_bit_of(i);
+        g_raw.ax[0] = SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_LEFTX); g_raw.ax[1] = SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_LEFTY);
+        g_raw.ax[2] = SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_RIGHTX); g_raw.ax[3] = SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_RIGHTY);
+        g_raw.lt = SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+        g_raw.rt = SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+    }
+#endif
+    if (g_raw.lt > TRIGGER_ON) g_raw.buttons |= 1u << FAM_PB_LT;
+    if (g_raw.rt > TRIGGER_ON) g_raw.buttons |= 1u << FAM_PB_RT;
+    uint32_t pressed = g_raw.buttons & ~before;
+    g_pad_latch |= pressed; g_pad_latch_engine |= pressed;    /* also what SDL's button events did */
+}
 /* g_pad_latch: buttons pressed since the game last read them; g_pad_latch_engine: the same for
  * the engine's own keys below; g_pad_script: buttons the input script holds */
 /* g_swallow: buttons ignored until released (the press that skipped a video
@@ -211,12 +238,7 @@ static uint32_t pad_bit_of(int sdl_button) {
 static uint32_t g_swallow;
 static int g_movie;
 static uint32_t pad_held(void) {
-    uint32_t b = g_pad_script;
-    if (g_pad) {
-        for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; i++) if (SDL_GameControllerGetButton(g_pad, (SDL_GameControllerButton)i)) b |= pad_bit_of(i);
-        if (SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > TRIGGER_ON) b |= 1u << FAM_PB_LT;
-        if (SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > TRIGGER_ON) b |= 1u << FAM_PB_RT;
-    }
+    uint32_t b = g_pad_script | g_raw.buttons;
     g_swallow &= b;
     return b & ~g_swallow;
 }
@@ -230,23 +252,29 @@ void fam_input_movie(int on) {
     if (!on) fam_input_swallow();
 }
 /* a stick with a radial dead zone, rescaled to -10000..10000 */
-static void stick(SDL_GameControllerAxis ax, SDL_GameControllerAxis ay, int32_t *ox, int32_t *oy) {
-    float x = SDL_GameControllerGetAxis(g_pad, ax) / 32767.f, y = SDL_GameControllerGetAxis(g_pad, ay) / 32767.f;
+static void stick(int right, int32_t *ox, int32_t *oy) {
+    float x = g_raw.ax[right * 2] / 32767.f, y = g_raw.ax[right * 2 + 1] / 32767.f;
     float m = sqrtf(x * x + y * y), dz = 0.2f;
     if (m <= dz) { *ox = *oy = 0; return; }
     float k = (m > 1.f ? 1.f : m) - dz; k = k / (1.f - dz) / m;
     *ox = (int32_t)(x * k * 10000.f); *oy = (int32_t)(y * k * 10000.f);
 }
-int fam_pad_present(void) { return g_pad != NULL; }
+int fam_pad_present(void) {
+#ifdef __SWITCH__
+    return g_pad_on;                                   /* asked before the first pump */
+#else
+    return g_raw.on;
+#endif
+}
 /* the controller's buttons held now (FAM_PB_* bits), for the video player's skip */
 uint32_t fam_pad_buttons(void) { return pad_held(); }
 void fam_pad_read(fam_pad *p) {
     memset(p, 0, sizeof *p);
-    if (!g_pad && !g_pad_script) return;
-    stick(SDL_CONTROLLER_AXIS_LEFTX, SDL_CONTROLLER_AXIS_LEFTY, &p->lx, &p->ly);
-    stick(SDL_CONTROLLER_AXIS_RIGHTX, SDL_CONTROLLER_AXIS_RIGHTY, &p->rx, &p->ry);
-    p->lt = SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_TRIGGERLEFT) * 10000 / 32767;
-    p->rt = SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) * 10000 / 32767;
+    if (!g_raw.on && !g_pad_script) return;
+    stick(0, &p->lx, &p->ly);
+    stick(1, &p->rx, &p->ry);
+    p->lt = g_raw.lt * 10000 / 32767;
+    p->rt = g_raw.rt * 10000 / 32767;
     if (g_pad_script & (1u << FAM_PB_LT)) p->lt = 10000;             /* scripted triggers are pulled fully */
     if (g_pad_script & (1u << FAM_PB_RT)) p->rt = 10000;
     p->buttons = (pad_held() | g_pad_latch) & ~g_swallow;   /* a tap between two polls still counts once */
@@ -259,7 +287,7 @@ static int in_menu(void) {
     return !game || !MEM32(game + 0xE4);               /* no player */
 }
 static void pad_update(void) {
-    if (!g_pad) return;
+    if (!g_raw.on && !g_pad_script) return;
     uint32_t b = (pad_held() | g_pad_latch_engine) & ~g_swallow;
     g_pad_latch_engine = 0;
     if (g_movie) b = 0;                                /* the video player reads the buttons itself */
@@ -267,7 +295,7 @@ static void pad_update(void) {
     if (b & (1u << FAM_PB_START)) want[0x01] = 0x80;                 /* Start: Esc */
     if (in_menu()) {
         g_pad_latch = 0;                               /* menu presses are not replayed into play */
-        int32_t lx, ly; stick(SDL_CONTROLLER_AXIS_LEFTX, SDL_CONTROLLER_AXIS_LEFTY, &lx, &ly);
+        int32_t lx, ly; stick(0, &lx, &ly);
         if (b & (1u << FAM_PB_A)) want[0x1C] = 0x80;                 /* Enter */
         if (b & (1u << FAM_PB_B)) want[0x01] = 0x80;                 /* Esc */
         if ((b & (1u << FAM_PB_UP)) || ly < -5000) want[0xC8] = 0x80;
@@ -293,7 +321,7 @@ static void pad_update(void) {
     float dt = last ? (float)(now - last) / 1000.f : 0.f;
     last = now;
     if (dt > 0.1f) dt = 0.1f;
-    int32_t rx, ry; stick(SDL_CONTROLLER_AXIS_RIGHTX, SDL_CONTROLLER_AXIS_RIGHTY, &rx, &ry);
+    int32_t rx, ry; stick(1, &rx, &ry);
     float fx = rx / 10000.f, fy = ry / 10000.f, m = sqrtf(fx * fx + fy * fy);
     if (m > 0.f) {
         float speed = m * m * 1500.f * (float)look / 100.f * dt / m;    /* quadratic response */
@@ -433,6 +461,7 @@ void fam_input_pump(void) {
             break;
         }
     }
+    raw_poll();
     pad_update();
     touch_update();
     if (g_nscript) script_update();
@@ -446,6 +475,10 @@ void fam_input_init(void) {
     script_init();
     g_pad_on = fam_config_int("pad", 1);              /* FAMILIA_PAD=0: no controller */
     if (!g_pad_on) return;
+#ifdef __SWITCH__
+    fprintf(stderr, "[input] controller: Switch HID (every controller, A = confirm, B = back)\n");
+    return;                                           /* switch/nx_pad.c, not SDL */
+#endif
     SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
     const char *db = getenv("SDL_GAMECONTROLLERCONFIG_FILE");
     if (db) SDL_GameControllerAddMappingsFromFile(db);

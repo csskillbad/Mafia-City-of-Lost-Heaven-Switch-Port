@@ -94,6 +94,35 @@ itself: type the name and confirm. **OK** is then selected, so press **A**.
 Menus: **D-pad** or left stick moves, **A** selects, **B** goes back. In
 handheld mode a tap on a menu item selects and clicks it.
 
+Every controller works: Joy-Cons in handheld mode or in the grip, a Pro
+Controller, any player slot. In the game:
+
+| | On foot | In a car |
+|---|---|---|
+| Left stick | move | steer |
+| Right stick | look / aim | look |
+| **ZR** | fire | accelerate |
+| **ZL** | aim through the sight | brake / reverse |
+| **A** | use, talk, enter / leave a car | leave the car |
+| **B** | jump | handbrake |
+| **Y** | reload | speed limiter |
+| **X** | crouch | horn |
+| **L** / **R** | inventory / walk-run toggle | look left / right |
+| D-pad left / right | previous / next weapon | gear down / up |
+| D-pad up / down | holster / drop weapon | - / automatic-manual gears |
+| L-stick click | hold to walk | |
+| R-stick click | objectives | camera |
+| **-** | map | |
+| **+** | pause menu | pause menu |
+
+Everything can be changed in *Options -> Controls*. A profile made by an
+earlier build of the port gets this layout on its next start.
+
+The all-in-one NSP carries the videos re-encoded as H.265 + Opus (needs
+`ffmpeg` with libx265 on the PC that builds; otherwise the originals are
+used), and leaves out the `.bik` copies the game never plays: about 440 MB
+smaller. `--original-videos` keeps the originals.
+
 ## Settings
 
 `sd:/switch/mafia/config.ini` (created on the first start, `KEY=VALUE` lines):

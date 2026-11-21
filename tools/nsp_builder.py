@@ -203,7 +203,12 @@ class Builder:
         if romfs_data.exists():
             shutil.rmtree(romfs_data)
         if c["full"]:
-            self.stage_game(Path(c["game"]), romfs_data)
+            videos = {}
+            if c.get("hevc", True):
+                sys.path.insert(0, str(ROOT / "tools"))
+                import encode_videos
+                videos = encode_videos.encode(c["game"], ROOT / "build/videos", log=self.log)
+            self.stage_game(Path(c["game"]), romfs_data, videos)
         else:
             (STAGE / "romfs/README.txt").write_text("Game data is read from sdmc:/switch/mafia/data\n")
         tmp = Path(tempfile.mkdtemp(prefix="familia_"))
@@ -237,8 +242,27 @@ class Builder:
         self.log(f"finished in {(time.time() - t0) / 60:.0f} min: {nsp_out}")
         return nsp_out
 
-    def stage_game(self, src, dst):
+    def stage_game(self, src, dst, videos=None):
+        """the game folder into romfs/data. Left out: videos replaced by their
+        H.265 re-encode (videos: original name -> .mkv), and name.bik where
+        name.avi exists (the game plays the .avi; the .bik is a spare copy)."""
+        videos = videos or {}
         files = [p for p in src.rglob("*") if p.is_file()]
+        top = {p.name.lower() for p in files if p.parent == src}
+        def left_out(p):
+            if p.parent != src:
+                return False
+            if p.name in videos:
+                return True
+            return p.suffix.lower() == ".bik" and (p.stem.lower() + ".avi") in top
+        dropped = [p for p in files if left_out(p)]
+        files = [p for p in files if not left_out(p)]
+        if dropped:
+            self.log("left out (re-encoded or unused): " + ", ".join(p.name for p in dropped) +
+                     f" ({sum(p.stat().st_size for p in dropped) / 2**20:.0f} MB)")
+        for v in videos.values():
+            dst.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(v, dst / Path(v).name)
         total = sum(p.stat().st_size for p in files) or 1
         self.log(f"adding your game files to the NSP: {len(files)} files, {total / 2**30:.1f} GB")
         done, last = 0, 0
@@ -409,7 +433,8 @@ def gui():
 def cli(a):
     c = {"game": a.game, "keys": a.keys, "hbp": a.hacbrewpack or find_hacbrewpack(),
          "pcrecomp": a.pcrecomp, "out": a.out, "engine": a.engine or find_engine(),
-         "jobs": a.jobs, "full": a.full, "verify": not a.no_verify, "retranslate": a.retranslate}
+         "jobs": a.jobs, "full": a.full, "verify": not a.no_verify, "retranslate": a.retranslate,
+         "hevc": not a.original_videos}
     last = [None]
 
     def emit(k, val):
@@ -437,5 +462,6 @@ if __name__ == "__main__":
     ap.add_argument("--full", action="store_true", help="all-in-one NSP with the game inside")
     ap.add_argument("--no-verify", action="store_true")
     ap.add_argument("--retranslate", action="store_true")
+    ap.add_argument("--original-videos", action="store_true", help="keep the original videos (no H.265 re-encode)")
     a = ap.parse_args()
     cli(a) if a.cli else gui()

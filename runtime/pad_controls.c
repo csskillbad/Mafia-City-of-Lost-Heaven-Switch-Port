@@ -47,6 +47,38 @@ enum { B_A, B_B, B_X, B_Y, B_LB, B_RB, B_BACK, B_START, B_L3, B_R3, B_LT, B_RT }
 #define POV_LEFT 0x208
 
 typedef struct { int index; int code; int half; } pad_bind;
+#ifdef __SWITCH__
+/* The Switch: buttons by their labels (switch/nx_pad.c), Nintendo style:
+ * A uses / enters cars, B jumps or handbrakes, Y reloads, X crouches. */
+static const pad_bind k_foot[] = {
+    { C_FORWARD + SECOND, AX_LY, HALF_NEG }, { C_BACKWARD + SECOND, AX_LY, HALF_POS },
+    { C_LEFT + SECOND, AX_LX, HALF_NEG },    { C_RIGHT + SECOND, AX_LX, HALF_POS },
+    { C_WALK + SECOND, BTN(B_L3), 0 },       /* hold to walk */
+    { C_ACTION + SECOND, BTN(B_A), 0 },      /* use, talk, enter and leave cars */
+    { C_FIRE + SECOND, BTN(B_RT), 0 },       /* ZR */
+    { C_CROUCH + SECOND, BTN(B_X), 0 },
+    { C_JUMP + SECOND, BTN(B_B), 0 },
+    { C_CYCLE_UP + SECOND, POV_RIGHT, 0 },   { C_CYCLE_DOWN + SECOND, POV_LEFT, 0 },
+    { C_INVENTORY, BTN(B_LB), 0 },           /* L */
+    { C_HIDE_WEAPON, POV_UP, 0 },            { C_DROP_WEAPON, POV_DOWN, 0 },
+    { C_TOGGLE_RUN, BTN(B_RB), 0 },          /* R */
+    { C_RELOAD, BTN(B_Y), 0 },
+    { C_SNIPER, BTN(B_LT), 0 },              /* ZL: aim through the sight */
+    { C_OBJECTIVES, BTN(B_R3), 0 },
+    { C_MAP, BTN(B_BACK), 0 },               /* - */
+};
+static const pad_bind k_car[] = {
+    { C_ACCELERATE + SECOND, AX_RT, HALF_POS }, { C_BRAKE + SECOND, AX_LT, HALF_POS },   /* ZR / ZL */
+    { C_STEER_LEFT + SECOND, AX_LX, HALF_NEG }, { C_STEER_RIGHT + SECOND, AX_LX, HALF_POS },
+    { C_HANDBRAKE + SECOND, BTN(B_B), 0 },
+    { C_LIMITER + SECOND, BTN(B_Y), 0 },
+    { C_GEAR_UP + SECOND, POV_RIGHT, 0 },       { C_GEAR_DOWN + SECOND, POV_LEFT, 0 },
+    { C_HORN + SECOND, BTN(B_X), 0 },
+    { C_LOOK_LEFT + SECOND, BTN(B_LB), 0 },     { C_LOOK_RIGHT + SECOND, BTN(B_RB), 0 },
+    { C_GEARING, POV_DOWN, 0 },
+    { C_CAMERA, BTN(B_R3), 0 },
+};
+#else
 static const pad_bind k_foot[] = {
     { C_FORWARD + SECOND, AX_LY, HALF_NEG }, { C_BACKWARD + SECOND, AX_LY, HALF_POS },
     { C_LEFT + SECOND, AX_LX, HALF_NEG },    { C_RIGHT + SECOND, AX_LX, HALF_POS },
@@ -74,6 +106,7 @@ static const pad_bind k_car[] = {
     { C_GEARING, POV_DOWN, 0 },
     { C_CAMERA, BTN(B_R3), 0 },
 };
+#endif
 
 /* S_control: int half; ushort device; ushort code; int joy */
 #define BIND(t, i) ((t) + (uint32_t)(i) * 12u)
@@ -93,6 +126,13 @@ void fam_native_apply_controls(void) {
     /* the car's stock second column binds the joystick's Y axis to the pedals */
     uint32_t acc = BIND(table, C_ACCELERATE + SECOND);
     int car_stock = MEM16(acc + 4) == DEV_JOY && MEM16(acc + 6) == AX_LY && MEM32(acc) == HALF_NEG;
+#ifdef __SWITCH__
+    /* a profile made by an earlier Switch build holds the Xbox layout (Y = use,
+     * X = jump; X = handbrake, B = limiter): it gets the Switch one */
+#define IS_BTN(i, n) (MEM16(BIND(table, i) + 4) == DEV_JOY && MEM16(BIND(table, i) + 6) == BTN(n))
+    if (IS_BTN(C_ACTION + SECOND, B_Y) && IS_BTN(C_JUMP + SECOND, B_X)) foot_has_pad = 0;
+    if (IS_BTN(C_HANDBRAKE + SECOND, B_X) && IS_BTN(C_LIMITER + SECOND, B_B)) car_stock = 1;
+#endif
     if (!foot_has_pad) for (size_t i = 0; i < sizeof k_foot / sizeof *k_foot; i++) set(table, &k_foot[i]);
     if (car_stock) for (size_t i = 0; i < sizeof k_car / sizeof *k_car; i++) set(table, &k_car[i]);
     if (!foot_has_pad || car_stock)

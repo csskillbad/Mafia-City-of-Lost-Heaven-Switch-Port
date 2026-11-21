@@ -154,6 +154,8 @@ static int play_file(const char *path, float sx, float sy) {
     if (!c) { fprintf(stderr, "[movie] %s: no decoder for the video\n", path); avformat_close_input(&fmt); return 0; }
     vc = avcodec_alloc_context3(c);
     avcodec_parameters_to_context(vc, fmt->streams[vi]->codecpar);
+    vc->thread_count = 3;                     /* H.265: frame threads on the cores the game leaves idle meanwhile */
+    vc->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
     if (avcodec_open2(vc, c, NULL) < 0) { fprintf(stderr, "[movie] %s: cannot open the %s decoder\n", path, c->name); avcodec_free_context(&vc); avformat_close_input(&fmt); return 0; }
     SwrContext *swr = NULL;
     int sid = -1;
@@ -163,9 +165,10 @@ static int play_file(const char *path, float sx, float sy) {
         if (avcodec_open2(ac, c, NULL) < 0) avcodec_free_context(&ac);
         else {
             AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
-            if (swr_alloc_set_opts2(&swr, &stereo, AV_SAMPLE_FMT_S16, ac->sample_rate,
+            /* to 44.1 kHz (the game's mixing rate) whatever the file has: Opus is 48 kHz */
+            if (swr_alloc_set_opts2(&swr, &stereo, AV_SAMPLE_FMT_S16, 44100,
                                     &ac->ch_layout, ac->sample_fmt, ac->sample_rate, 0, NULL) < 0 || swr_init(swr) < 0) swr_free(&swr);
-            else sid = hle_audio_stream_open(ac->sample_rate, 2);
+            else sid = hle_audio_stream_open(44100, 2);
         }
     }
     int w = vc->width, h = vc->height;
@@ -211,7 +214,7 @@ static int play_file(const char *path, float sx, float sy) {
                 }
         }
         av_packet_unref(pkt);
-        while (sid >= 0 && ac && hle_audio_stream_queued(sid) > ac->sample_rate * 3 / 2 && !skipped) {
+        while (sid >= 0 && ac && hle_audio_stream_queued(sid) > 44100 * 3 / 2 && !skipped) {
             if (skip_pressed() && held) skipped = 1;
             SDL_Delay(5);
         }
@@ -238,7 +241,9 @@ void fam_native_play_logo(void) {
     const char *e = getenv("FAMILIA_MOVIES");
     if (!e || atoi(e)) {
         char path[1024];
-        if (find_file(name, "avi", path, sizeof path)) ok = play_file(path, sx, sy);
+        /* name.mkv first: the Switch NSP's H.265 + Opus re-encodes (tools/encode_videos.sh) */
+        if (find_file(name, "mkv", path, sizeof path)) ok = play_file(path, sx, sy);
+        if (!ok && find_file(name, "avi", path, sizeof path)) ok = play_file(path, sx, sy);
         if (!ok && find_file(name, "bik", path, sizeof path)) ok = play_file(path, sx, sy);
         if (!ok) fprintf(stderr, "[movie] %s: not played\n", name);
     }
