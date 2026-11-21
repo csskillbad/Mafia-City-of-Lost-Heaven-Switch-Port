@@ -99,7 +99,9 @@
                 "svcGetSystemInfo": "0x6f",
                 "svcCallSecureMonitor": "0x7f",
                 "svcSetThreadActivity": "0x32",
-                "svcGetThreadContext3": "0x33"
+                "svcGetThreadContext3": "0x33",
+                "svcCreateCodeMemory": "0x4b",
+                "svcControlCodeMemory": "0x4c"
             }
         },
         {

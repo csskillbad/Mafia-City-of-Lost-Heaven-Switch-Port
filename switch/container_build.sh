@@ -54,9 +54,10 @@ done
 step 3 stage
 s=build/switch/nsp_stage
 rm -rf "$s"; mkdir -p "$s/exefs" "$s/control" "$s/romfs"
-elf2nso build/switch/familia.elf "$s/exefs/main"
+elf2nso build/switch/familia_nso.elf "$s/exefs/main"
 npdmtool switch/main.npdm.json "$s/exefs/main.npdm"
 nacptool --create 'Mafia' 'The Familia (Switch port)' "$VERSION" "$s/control/control.nacp" --titleid=0100d3d001420000
 cp switch/icon.jpg "$s/control/icon_AmericanEnglish.dat"
 cp -r switch/romfs/. "$s/romfs/"
+cp build/switch/gentext.bin "$s/romfs/gentext.bin"   # the game code (switch/nx_codeload.c)
 echo "@@DONE $s"

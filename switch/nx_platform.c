@@ -216,6 +216,30 @@ int main(int argc, char **argv) {
     freopen(NX_ROOT "/log.txt", "w", stderr);
     setvbuf(stderr, NULL, _IOLBF, 0);
 
+    /* the translated game code is not in the NSO (too big to start): map it
+     * from romfs:/gentext.bin before anything can call into it */
+    {
+        int nx_load_gentext(char *err, size_t errsz);
+        char err[256] = "";
+        if (nx_load_gentext(err, sizeof err)) {
+            fprintf(stderr, "[nx] game code: %s\n", err);
+            fflush(stderr);
+            consoleInit(NULL);
+            printf("Mafia could not load its game code:\n\n%s\n\nPlease report this with sd:%s/log.txt\n\nPress + to exit.\n", err, NX_ROOT);
+            PadState pad;
+            padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+            padInitializeDefault(&pad);
+            while (appletMainLoop()) {
+                padUpdate(&pad);
+                if (padGetButtonsDown(&pad) & HidNpadButton_Plus) break;
+                consoleUpdate(NULL);
+            }
+            consoleExit(NULL);
+            romfsExit();
+            return 1;
+        }
+    }
+
     /* Game files: sd:/switch/mafia/data, or inside the NSP (romfs:/data) for a
      * personal all-in-one build (switch/make_nsp.sh FULL=1). An all-in-one NSP uses its own copy. */
     struct stat st;

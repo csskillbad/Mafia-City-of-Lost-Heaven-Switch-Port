@@ -43,7 +43,7 @@ if a.src:
                         names[(m.group(1).lower(), int(m.group(2), 16))] = d.group(1); break
 
 def pretty(sym):
-    m = re.match(r"recomp_(\w+?)_([0-9A-Fa-f]{6,8})(_orig)?$", sym)
+    m = re.match(r"recomp_(\w+?)_([0-9A-Fa-f]{6,8})(_orig|_probed)?$", sym)
     if m:
         n = names.get((m.group(1).lower(), int(m.group(2), 16)))
         if n: return f"{sym}  [{n}]"

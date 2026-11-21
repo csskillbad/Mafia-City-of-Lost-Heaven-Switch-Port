@@ -126,17 +126,30 @@ static int skip_pressed(void) {
 /* plays one file; returns 0 if it could not be opened */
 static int play_file(const char *path, float sx, float sy) {
     AVFormatContext *fmt = NULL;
-    if (avformat_open_input(&fmt, path, NULL, NULL) < 0) return 0;
-    if (avformat_find_stream_info(fmt, NULL) < 0) { avformat_close_input(&fmt); return 0; }
+    /* "romfs:/data/x.avi" (the Switch all-in-one NSP) would be taken for a URL
+     * with an unknown "romfs" protocol: name the file protocol explicitly */
+    char url[1100];
+    const char *colon = strchr(path, ':'), *slash = strchr(path, '/');
+    snprintf(url, sizeof url, "%s%s", colon && (!slash || colon < slash) ? "file:" : "", path);
+    int err = avformat_open_input(&fmt, url, NULL, NULL);
+    if (err < 0) {
+        char msg[128]; av_strerror(err, msg, sizeof msg);
+        fprintf(stderr, "[movie] %s: cannot open (%s)\n", path, msg);
+        return 0;
+    }
+    if (avformat_find_stream_info(fmt, NULL) < 0) {
+        fprintf(stderr, "[movie] %s: no stream info\n", path);
+        avformat_close_input(&fmt); return 0;
+    }
     int vi = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
     int ai = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
-    if (vi < 0) { avformat_close_input(&fmt); return 0; }
+    if (vi < 0) { fprintf(stderr, "[movie] %s: no video stream\n", path); avformat_close_input(&fmt); return 0; }
     AVCodecContext *vc = NULL, *ac = NULL;
     const AVCodec *c = avcodec_find_decoder(fmt->streams[vi]->codecpar->codec_id);
     if (!c) { fprintf(stderr, "[movie] %s: no decoder for the video\n", path); avformat_close_input(&fmt); return 0; }
     vc = avcodec_alloc_context3(c);
     avcodec_parameters_to_context(vc, fmt->streams[vi]->codecpar);
-    if (avcodec_open2(vc, c, NULL) < 0) { avcodec_free_context(&vc); avformat_close_input(&fmt); return 0; }
+    if (avcodec_open2(vc, c, NULL) < 0) { fprintf(stderr, "[movie] %s: cannot open the %s decoder\n", path, c->name); avcodec_free_context(&vc); avformat_close_input(&fmt); return 0; }
     SwrContext *swr = NULL;
     int sid = -1;
     if (ai >= 0 && (c = avcodec_find_decoder(fmt->streams[ai]->codecpar->codec_id))) {

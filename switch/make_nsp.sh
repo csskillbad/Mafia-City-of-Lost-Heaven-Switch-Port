@@ -21,7 +21,9 @@ out=build/switch/Mafia.nsp
 full="${FULL:-0}"
 [ "$full" = 1 ] && out=build/switch/Mafia_full.nsp
 
-elf="${ELF:-build/switch/familia.elf}"
+elf="${ELF:-build/switch/familia_nso.elf}"
+gentext="${GENTEXT:-build/switch/gentext.bin}"
+[ -f "$gentext" ] || { echo "$gentext missing: build first" >&2; exit 2; }
 [ -f "$elf" ] || { echo "$elf missing: build first" >&2; exit 2; }
 [ -f "$keys" ] || { echo "prod.keys not found: $keys" >&2; exit 2; }
 [ -x "$hbp" ] || { echo "hacbrewpack not found" >&2; exit 2; }
@@ -37,6 +39,7 @@ podman run --rm --security-opt label=disable -v "$root:/src" -w /src "$img" bash
   nacptool --create 'Mafia' 'The Familia (Switch port)' '$version' \$s/control/control.nacp --titleid=0100d3d001420000
   cp switch/icon.jpg \$s/control/icon_AmericanEnglish.dat
   cp -r switch/romfs/. \$s/romfs/
+  cp $gentext \$s/romfs/gentext.bin
   printf 'Game data is read from sdmc:/switch/mafia/data\n' > \$s/romfs/README.txt
 "
 

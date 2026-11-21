@@ -47,7 +47,7 @@ CFLAGS   += $(PGOUSE)
 GENFLAGS += $(PGOUSE)
 endif
 # threadCreate is wrapped (nx_platform.c) to spread threads over the cores.
-LDFLAGS := -specs=$(DEVKITPRO)/libnx/switch.specs $(ARCH) -Wl,-Map,$(TARGET).map -Wl,--wrap=threadCreate
+LDFLAGS := -specs=switch/familia.specs $(ARCH) -Wl,-Map,$(TARGET).map -Wl,--wrap=threadCreate
 LIBS    := -L$(PORTLIBS)/lib -L$(DEVKITPRO)/libnx/lib \
            -lSDL2_ttf -lfreetype -lharfbuzz -lbz2 -lpng16 \
            -lSDL2 -lEGL -lGLESv2 -lglapi -ldrm_nouveau \
@@ -56,19 +56,28 @@ LIBS    := -L$(PORTLIBS)/lib -L$(DEVKITPRO)/libnx/lib \
 
 HLE_SRC := $(filter-out %_selftest.c,$(wildcard $(PC)/win32hle/*.c))
 RT_SRC  := $(filter-out runtime/crash.c runtime/prof.c,$(wildcard runtime/*.c))
-NX_SRC  := switch/nx_platform.c switch/nx_prof.c
+NX_SRC  := switch/nx_platform.c switch/nx_prof.c switch/nx_codeload.c
 GEN_SRC := $(wildcard $(GEN)/*/f_*.c) $(GEN)/dispatch.c $(GEN)/probes.c
 
 obj = $(patsubst %.c,$(OUT)/%.o,$(1))
 OBJS := $(call obj,$(HLE_SRC)) $(call obj,$(RT_SRC)) $(call obj,$(NX_SRC)) $(call obj,$(GEN_SRC))
 
 .PHONY: all clean platform
-all: $(TARGET).nro
+# The NSO is built from familia_nso.elf (the module without .gentext); the
+# translated game code goes into the NSP's RomFS as gentext.bin and is mapped
+# at run time (switch/familia.ld, switch/nx_codeload.c).
+all: $(OUT)/familia_nso.elf $(OUT)/gentext.bin
 platform: $(call obj,$(HLE_SRC)) $(call obj,$(RT_SRC)) $(call obj,$(NX_SRC))
 
 # Mesa is C++: link with g++ for libstdc++
-$(TARGET).elf: $(OBJS)
-	$(CXX) $(LDFLAGS) $(LDPGO) -o $@ $^ $(LIBS) -lstdc++
+$(TARGET).elf: $(OBJS) switch/familia.ld switch/familia.specs
+	$(CXX) $(LDFLAGS) $(LDPGO) -o $@ $(OBJS) $(LIBS) -lstdc++
+
+$(OUT)/gentext.bin: $(TARGET).elf
+	$(PREFIX)objcopy -O binary --only-section=.gentext $< $@
+
+$(OUT)/familia_nso.elf: $(TARGET).elf
+	$(PREFIX)objcopy --remove-section=.gentext $< $@
 
 $(TARGET).nacp:
 	nacptool --create "Mafia" "The Familia" "0.1.0" $@
