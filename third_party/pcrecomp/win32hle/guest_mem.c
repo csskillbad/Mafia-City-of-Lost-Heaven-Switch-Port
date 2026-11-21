@@ -14,6 +14,7 @@
  * Windows allocation granularity.
  */
 #define _GNU_SOURCE   /* MAP_ANONYMOUS */
+#define RECOMP_MEM_BASE_WRITER 1  /* sets g_mem_base (recomp_types.h) */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

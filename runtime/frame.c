@@ -178,6 +178,14 @@ void fam_present_hook(void) {
         fprintf(stderr, "[stats] rss %ld MB peak %ld MB | lock takes/s %.0f yields/s %.0f | ", rss_kb >> 10, hwm_kb >> 10,
                 (double)(hle_mach_takes - last_takes) / s, (double)(hle_yields - last_yields) / s);
         last_takes = hle_mach_takes; last_yields = hle_yields;
+        {   /* par.c: data-parallel loops shared with the worker thread */
+            extern uint64_t fam_par_jobs, fam_par_worker_chunks, fam_par_chunks;
+            static uint64_t lj, lw, lc;
+            uint64_t w = fam_par_worker_chunks - lw, c = fam_par_chunks - lc;
+            fprintf(stderr, "[par] %.0f jobs/frame, worker did %.0f%% of %.0f chunks/frame | ",
+                    (double)(fam_par_jobs - lj) / frames, w + c ? 100.0 * (double)w / (double)(w + c) : 0.0, (double)(w + c) / frames);
+            lj = fam_par_jobs; lw = fam_par_worker_chunks; lc = fam_par_chunks;
+        }
         {   /* CPU clock and temperature: the H700 throttles above 60 C */
             long khz = 0, mc = 0; FILE *q;
             if ((q = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", "r"))) { if (fscanf(q, "%ld", &khz) != 1) khz = 0; fclose(q); }

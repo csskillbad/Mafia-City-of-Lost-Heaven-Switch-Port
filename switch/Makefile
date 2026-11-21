@@ -18,9 +18,34 @@ DEFS    := -D__SWITCH__ -DFAMILIA_SWITCH -D_GNU_SOURCE
 INCS    := -Iswitch/compat -I$(PC)/recomp32 -I$(PC)/win32hle -Iruntime \
            -I$(DEVKITPRO)/libnx/include -I$(PORTLIBS)/include -I$(PORTLIBS)/include/SDL2
 # No RECOMP_MEM_BASE: Horizon decides where the guest's 4 GB lives, so the
-# lift adds the runtime g_mem_base (recomp_types.h).
-CFLAGS  := $(ARCH) $(OPT) -g1 -ffunction-sections -fno-strict-aliasing -fwrapv $(DEFS) $(INCS)
+# lift adds the runtime g_mem_base (recomp_types.h). RECOMP_MEM_BASE_CONST
+# declares it const (set once at start): GCC stops reloading it after every
+# guest store. hidden.h: one static PIE, so globals are reached PC-relative
+# instead of through the GOT. Together: -34% load instructions in the lift.
+DEFS    += -DRECOMP_MEM_BASE_CONST
+CFLAGS  := $(ARCH) $(OPT) -g1 -ffunction-sections -fno-strict-aliasing -fwrapv $(DEFS) $(INCS) \
+           -include switch/compat/hidden.h
 GENFLAGS := $(CFLAGS) -w -DRECOMP_LOCAL_REGS -DRECOMP_NONVOLATILE_MEM -include switch/compat/gen_compat.h
+
+# Profile-guided optimisation (as upstream's Makefile):
+#   make -f switch/Makefile -B PGO=gen   instrumented; the console/emulator
+#        writes counters to sd:$(PGO_RUN_DIR) (config.ini GCOV_DUMP=<seconds>)
+#   copy them to $(PGO_DIR), then make -f switch/Makefile -B PGO=use
+# Same object paths in both builds: the counter files are named after them.
+PGO ?=
+PGO_RUN_DIR ?= /switch/mafia/pgo
+PGO_DIR ?= build/pgo-switch
+ifeq ($(PGO),gen)
+CFLAGS   += -fprofile-generate=$(PGO_RUN_DIR) -fprofile-update=single -DFAMILIA_PGO_GEN
+GENFLAGS += -fprofile-generate=$(PGO_RUN_DIR) -fprofile-update=single
+LDPGO    := -fprofile-generate=$(PGO_RUN_DIR)
+endif
+ifeq ($(PGO),use)
+PGOUSE   := -fprofile-use=$(abspath $(PGO_DIR)) -fprofile-partial-training -fprofile-correction \
+            -Wno-missing-profile -Wno-coverage-mismatch
+CFLAGS   += $(PGOUSE)
+GENFLAGS += $(PGOUSE)
+endif
 # threadCreate is wrapped (nx_platform.c) to spread threads over the cores.
 LDFLAGS := -specs=$(DEVKITPRO)/libnx/switch.specs $(ARCH) -Wl,-Map,$(TARGET).map -Wl,--wrap=threadCreate
 LIBS    := -L$(PORTLIBS)/lib -L$(DEVKITPRO)/libnx/lib \
@@ -43,7 +68,7 @@ platform: $(call obj,$(HLE_SRC)) $(call obj,$(RT_SRC)) $(call obj,$(NX_SRC))
 
 # Mesa is C++: link with g++ for libstdc++
 $(TARGET).elf: $(OBJS)
-	$(CXX) $(LDFLAGS) -o $@ $^ $(LIBS) -lstdc++
+	$(CXX) $(LDFLAGS) $(LDPGO) -o $@ $^ $(LIBS) -lstdc++
 
 $(TARGET).nacp:
 	nacptool --create "Mafia" "The Familia" "0.1.0" $@

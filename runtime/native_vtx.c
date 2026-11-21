@@ -21,6 +21,7 @@
  * Source vertices: position (12 bytes) then normal (12); 0x20 bytes apart in
  * the transforms, which write 0x18-byte position+normal records.
  */
+#include "par.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,39 +50,53 @@ static inline double xf_dir(uint32_t n, uint32_t m, int j) {
 }
 
 /* ------------------------------------------------------ TransformVertices */
-void fam_native_transform_vertices(void) {
-    uint32_t count = MEM32(g_esp + 4), m = MEM32(g_esp + 8), mn = MEM32(g_esp + 12);
-    if (!fam_native_vtx_on || !count) { recomp_ls3df_10068360_orig(); return; }
-    uint32_t dst = g_ecx, src = g_edx;
-    for (uint32_t i = 0; i < count; i++, dst += 0x18, src += 0x20) {
+typedef struct { uint32_t dst, src, m, mn; } xf_job;
+static void xf_range(void *ctx, uint32_t b, uint32_t e) {
+    const xf_job *J = ctx;
+    uint32_t dst = J->dst + b * 0x18, src = J->src + b * 0x20, m = J->m, mn = J->mn;
+    for (uint32_t i = b; i < e; i++, dst += 0x18, src += 0x20) {
         double p0 = xf_pos(src, m, 0), p1 = xf_pos(src, m, 1), p2 = xf_pos(src, m, 2);
         st(dst, p0); st(dst + 4, p1); st(dst + 8, p2);
         double n0 = xf_dir(src + 12, mn, 0), n1 = xf_dir(src + 12, mn, 1), n2 = xf_dir(src + 12, mn, 2);
         st(dst + 12, n0); st(dst + 16, n1); st(dst + 20, n2);
     }
+}
+void fam_native_transform_vertices(void) {
+    uint32_t count = MEM32(g_esp + 4), m = MEM32(g_esp + 8), mn = MEM32(g_esp + 12);
+    if (!fam_native_vtx_on || !count) { recomp_ls3df_10068360_orig(); return; }
+    xf_job J = { g_ecx, g_edx, m, mn };
+    fam_par_for(xf_range, &J, count, 64);
     g_eax = mn; g_ecx = 0; g_edx = m;
     g_esp += 4 + 12;
 }
 
 /* ------------------------------------------------- TransformVerticesBlend */
 /* two transforms blended by the vertex's weight w: a*w + b*(1 - w) */
+typedef struct { uint32_t dst, src, wts, m1, mn1, m2, mn2; double one; } blend_job;
+static void blend_range(void *ctx, uint32_t b, uint32_t e) {
+    const blend_job *J = ctx;
+    const double one = J->one;
+    uint32_t dst = J->dst + b * 0x18, src = J->src + b * 0x20, wts = J->wts + b * 4;
+    for (uint32_t i = b; i < e; i++, dst += 0x18, src += 0x20, wts += 4) {
+        double a[3], bb[3];
+        for (int j = 0; j < 3; j++) a[j] = xf_pos(src, J->m1, j);
+        for (int j = 0; j < 3; j++) bb[j] = xf_pos(src, J->m2, j);
+        double w = ld(wts), iw = one - w;
+        for (int j = 0; j < 3; j++) st(dst + 4 * j, a[j] * w + bb[j] * iw);
+        for (int j = 0; j < 3; j++) a[j] = xf_dir(src + 12, J->mn1, j);
+        for (int j = 0; j < 3; j++) bb[j] = xf_dir(src + 12, J->mn2, j);
+        w = ld(wts); iw = one - w;
+        for (int j = 0; j < 3; j++) st(dst + 12 + 4 * j, a[j] * w + bb[j] * iw);
+    }
+}
 void fam_native_transform_vertices_blend(void) {
     uint32_t count = MEM32(g_esp + 4), m1 = MEM32(g_esp + 8), mn1 = MEM32(g_esp + 12);
     uint32_t wts = MEM32(g_esp + 16), m2 = MEM32(g_esp + 20), mn2 = MEM32(g_esp + 24);
     if (!fam_native_vtx_on || !count) { recomp_ls3df_10068430_orig(); return; }
-    uint32_t dst = g_ecx, src = g_edx;
-    const double one = ld(0x100A947Cu);                       /* the engine's 1.0f */
-    for (uint32_t i = 0; i < count; i++, dst += 0x18, src += 0x20, wts += 4) {
-        double a[3], b[3];
-        for (int j = 0; j < 3; j++) a[j] = xf_pos(src, m1, j);
-        for (int j = 0; j < 3; j++) b[j] = xf_pos(src, m2, j);
-        double w = ld(wts), iw = one - w;
-        for (int j = 0; j < 3; j++) st(dst + 4 * j, a[j] * w + b[j] * iw);
-        for (int j = 0; j < 3; j++) a[j] = xf_dir(src + 12, mn1, j);
-        for (int j = 0; j < 3; j++) b[j] = xf_dir(src + 12, mn2, j);
-        w = ld(wts); iw = one - w;
-        for (int j = 0; j < 3; j++) st(dst + 12 + 4 * j, a[j] * w + b[j] * iw);
-    }
+    blend_job J = { g_ecx, g_edx, wts, m1, mn1, m2, mn2, ld(0x100A947Cu) };   /* the engine's 1.0f */
+    /* every vertex is independent: split between this thread and the worker (par.c) */
+    fam_par_for(blend_range, &J, count, 64);
+    wts += count * 4;
     g_eax = wts; g_ecx = 0; g_edx = mn2;
     g_esp += 4 + 24;
 }

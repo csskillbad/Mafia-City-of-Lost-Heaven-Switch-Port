@@ -306,3 +306,17 @@ int fam_native_svec_check(void) {
     if (bad) fam_native_crt_on = 0;
     return 0;
 }
+
+/* long __ftol(void) - Game.exe 0x6109D0, MSVC's float-to-integer conversion:
+ * st0 popped, truncated (the routine sets the control word to chop around
+ * its fistp qword and restores it), the 64-bit result in edx:eax. Called for
+ * every (int) cast of a float in the game. The translated original keeps
+ * eight guest stack accesses and two control-word round trips; this is the
+ * same conversion (fp_st0_to_i64, as the lift's fistp, out-of-range included)
+ * without them. The locals it leaves below esp are never read. */
+void fam_native_ftol(void) {
+    int64_t q = fp_st0_to_i64(g_st[0], g_st_i64[0], (uint16_t)(g_fpu_cw | 0x0C00u));
+    (void)XPOP();
+    g_eax = (uint32_t)q; g_edx = (uint32_t)((uint64_t)q >> 32);
+    g_esp += 4;                                        /* ret */
+}

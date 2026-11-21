@@ -15,6 +15,7 @@
  * leaves the dividend (the translator's rule). fam_native_light_check
  * (FAMILIA_NATIVE_CHECK=1) compares each with its translated original.
  */
+#include "par.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -257,6 +258,17 @@ static void light4(const flight *L, int n, const float *V[4], uint32_t alpha, co
     vst1q_u32(out, c);
 }
 static int g_light_exact = -1;
+typedef struct { const flight *F; int n; uint32_t pv, src_stride, dst, dst_stride, nv, alpha; float fa[3], mult, one; } light_job;
+static void light_range(void *ctx, uint32_t b, uint32_t e) {      /* b is a multiple of 4 (chunk 64) */
+    const light_job *J = ctx;
+    uint32_t c4[4];
+    for (uint32_t k = b; k < e; k += 4) {
+        const float *V[4];
+        for (int i = 0; i < 4; i++) V[i] = (const float *)ADDR(J->pv + (k + i < J->nv ? k + i : J->nv - 1) * J->src_stride);
+        light4(J->F, J->n, V, J->alpha, J->fa, J->mult, J->one, c4);
+        for (int i = 0; i < 4 && k + i < e; i++) MEM32(J->dst + (k + i) * J->dst_stride) = c4[i];
+    }
+}
 #endif
 
 /* ---- the sector's lights, packed once per render ----
@@ -582,6 +594,11 @@ void fam_native_prepare_lights(void) {
         float fa[3] = { (float)amb[0], (float)amb[1], (float)amb[2] };
         uint32_t sr = 0, sg = 0, sb = 0, c4[4];
         int average = (vf & 0x80) != 0;
+        if (!average) {
+            /* every vertex's colour is independent: split with the worker (par.c) */
+            light_job J = { F, n, pv, src_stride, dst, dst_stride, nv, alpha, { fa[0], fa[1], fa[2] }, (float)mult, (float)one };
+            fam_par_for(light_range, &J, nv, 64);
+        } else
         for (uint32_t k = 0; k < nv; k += 4) {
             const float *V[4];
             for (int i = 0; i < 4; i++) V[i] = (const float *)ADDR(pv + (k + i < nv ? k + i : nv - 1) * src_stride);

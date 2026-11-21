@@ -12,6 +12,7 @@
  * adds image mapping and IAT binding on top; those are separate.
  */
 #define _GNU_SOURCE
+#define RECOMP_MEM_BASE_WRITER 1  /* sets g_mem_base (recomp_types.h) */
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>

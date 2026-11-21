@@ -185,7 +185,16 @@ extern const uint32_t recomp_dispatch_count;
  * For fixed-base mapping, this is 0.
  * ============================================================ */
 
+/* [familia-switch] RECOMP_MEM_BASE_CONST: the base is set once, before any
+ * guest code runs (Horizon places the guest span at a randomised address, so
+ * it cannot be a build-time constant). Declared const everywhere but the one
+ * file that sets it (host_lite.c), GCC knows no store can change it and keeps
+ * it in a register instead of reloading it after every guest store. */
+#if defined(RECOMP_MEM_BASE_CONST) && !defined(RECOMP_MEM_BASE_WRITER)
+extern const ptrdiff_t g_mem_base;
+#else
 extern ptrdiff_t g_mem_base;
+#endif
 
 #ifdef RECOMP_FLAT_MEMORY
 /* Guest VAs ARE host addresses (a 32-bit host mapping each module at its own
