@@ -56,7 +56,7 @@ LIBS    := -L$(PORTLIBS)/lib -L$(DEVKITPRO)/libnx/lib \
 
 HLE_SRC := $(filter-out %_selftest.c,$(wildcard $(PC)/win32hle/*.c))
 RT_SRC  := $(filter-out runtime/crash.c runtime/prof.c,$(wildcard runtime/*.c))
-NX_SRC  := switch/nx_platform.c switch/nx_prof.c switch/nx_codeload.c
+NX_SRC  := switch/nx_platform.c switch/nx_prof.c switch/nx_codeload.c switch/nx_textinput.c
 GEN_SRC := $(wildcard $(GEN)/*/f_*.c) $(GEN)/dispatch.c $(GEN)/probes.c
 
 obj = $(patsubst %.c,$(OUT)/%.o,$(1))

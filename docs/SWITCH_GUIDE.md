@@ -84,8 +84,10 @@ python3 tools/nsp_builder.py --cli --game /path/to/Mafia --keys /path/to/prod.ke
 3. Start **Mafia** from the HOME menu. Start it as a normal title, not from the
    album applet: the game needs full memory.
 
-First start: the game asks for a profile name. Type it with the on-screen
-keyboard, then press **D-pad down** to select **OK** and press **A**.
+First start: the game asks for a profile name. The Switch keyboard opens by
+itself: type the name and confirm, then press **D-pad down** to select **OK**
+and press **A**. (Selecting the name field and pressing A opens the keyboard
+again.)
 
 ## Settings
 

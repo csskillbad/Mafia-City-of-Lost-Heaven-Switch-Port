@@ -292,6 +292,9 @@ void fam_input_pump(void) {
     static int dbg = -1; if (dbg < 0) dbg = fam_config_int("paddbg", 0);
     if (dbg) pad_debug();
 #ifdef __SWITCH__
+    /* [familia-switch] the system keyboard for the game's text fields (the
+     * profile name): a Switch has no keyboard to type into them */
+    { void nx_textinput_install(void); nx_textinput_install(); }
     /* [familia-switch] docking changes the drawable (1280x720 <-> 1920x1080):
      * follow it even if no window event arrives, so the 4:3 picture is always
      * rendered at the panel's / TV's native resolution. */
