@@ -26,6 +26,10 @@ DirectSound layer answered by SDL2 + OpenGL ES (Mesa) on Horizon OS.
   would otherwise start them all on core 0.
 
 ## Build
+The easy way is the NSP builder (`build_nsp_gui.sh` / `build_nsp_gui.bat`,
+[docs/SWITCH_GUIDE.md](../docs/SWITCH_GUIDE.md)): it runs the steps below in
+the `familia-switch` container (`docker/Dockerfile.switch`,
+`switch/container_build.sh`) and packs on the host. By hand:
 ```sh
 # 1. translate your own Mafia 1.2 executables (see docs/BUILDING.md)
 PCRECOMP=/path/to/pcrecomp python3 -P tools/translate.py /path/to/game

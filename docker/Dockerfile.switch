@@ -1,0 +1,11 @@
+# Switch build image for The Familia: devkitA64 (libnx, Mesa, SDL2, FFmpeg
+# portlibs) plus what tools/translate.py needs (Python 3, pefile, capstone),
+# pinned to the versions the port was tested with.
+# Used by tools/nsp_builder.py and switch/container_build.sh.
+FROM docker.io/devkitpro/devkita64:20251117
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      python3-pip make && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip3 install --no-cache-dir --break-system-packages capstone==5.0.7 pefile==2024.8.26
+WORKDIR /src

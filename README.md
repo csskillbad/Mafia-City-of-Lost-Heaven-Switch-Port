@@ -1,4 +1,36 @@
-# The Familia
+# The Familia for Nintendo Switch
+
+*Mafia: The City of Lost Heaven* (PC, 2002, version 1.2) running **natively on a
+Nintendo Switch** with custom firmware. The game's own x86 code is statically
+recompiled to ARM64; Direct3D 8, DirectSound and DirectInput are answered by
+OpenGL ES (Mesa), SDL2 and libnx. Rendered at 720p handheld / 1080p docked in
+16:9.
+
+This is the Switch port of [The Familia](https://github.com/rzrbld/TheFamilia)
+by Aleksandr Petruhin (MIT license), which runs Mafia on ARM64 Linux handhelds.
+
+> **No game files, and no code made from them, are in this repository.** You
+> build the NSP yourself from your own copy of Mafia 1.2 with the NSP builder.
+
+![NSP builder](docs/builder.png)
+
+**[Build and install guide](docs/SWITCH_GUIDE.md)**: requirements, the NSP
+builder (Windows and Linux), installing, settings and troubleshooting.
+
+```sh
+git clone --recursive https://github.com/csskillbad/TheFamilia-Switch
+cd TheFamilia-Switch
+./build_nsp_gui.sh          # Windows: double-click build_nsp_gui.bat
+```
+
+Port details (platform layer, memory, threads, frame rate, profiling):
+[switch/README.md](switch/README.md).
+
+---
+
+*The original project's README (PortMaster handhelds) follows.*
+
+## The Familia (PortMaster)
 
 **Beta.** *Mafia: The City of Lost Heaven* (PC, 2002, version 1.2) running natively
 on ARM64 Linux handhelds through PortMaster. The game's own x86 code (Game.exe and

@@ -1,0 +1,3 @@
+[submodule "third_party/pcrecomp-src"]
+	path = third_party/pcrecomp-src
+	url = https://github.com/sp00nznet/pcrecomp
