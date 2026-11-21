@@ -50,7 +50,7 @@ Start the builder:
    suggests a safe number for your PC. With 16 GB use 1, with 32 GB use 2.
    Too many jobs runs your PC out of memory and the build fails.
 6. **All-in-one NSP** (recommended): the game files go inside the NSP, so you
-   install one file and copy nothing to the SD card. The NSP is then ~2.8 GB.
+   install one file and copy nothing to the SD card. The NSP is then ~1.8 GB.
    Untick it for a ~150 MB NSP that reads the game from the SD card instead.
 7. Click **Check setup**, then **Build NSP**.
 
@@ -118,10 +118,18 @@ Controller, any player slot. In the game:
 Everything can be changed in *Options -> Controls*. A profile made by an
 earlier build of the port gets this layout on its next start.
 
-The all-in-one NSP carries the videos re-encoded as H.265 + Opus (needs
-`ffmpeg` with libx265 on the PC that builds; otherwise the originals are
-used), and leaves out the `.bik` copies the game never plays: about 440 MB
-smaller. `--original-videos` keeps the originals.
+The all-in-one NSP is compressed (needs `ffmpeg` with libx265 and libopus on
+the PC that builds; without it the original files are packed):
+
+- the videos as H.265 + Opus (x265 preset placebo, CRF 21), and the `.bik`
+  copies the game never plays are left out: 507 MB -> 89 MB;
+- the sounds (`sounds/*.wav`, 990 MB) as Opus, 80 kbit/s mono / 128 kbit/s
+  stereo: 249 MB. The port decodes each one back into the exact WAV the game
+  expects (same rate, length and header) when the game loads it.
+
+About 1.8 GB instead of 3.0 GB. The first build encodes for about an hour
+(the videos' placebo preset); later builds reuse the results.
+`--original-videos` / `--wav-sounds` pack the originals.
 
 ## Settings
 

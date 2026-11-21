@@ -208,7 +208,12 @@ class Builder:
                 sys.path.insert(0, str(ROOT / "tools"))
                 import encode_videos
                 videos = encode_videos.encode(c["game"], ROOT / "build/videos", log=self.log)
-            self.stage_game(Path(c["game"]), romfs_data, videos)
+            sounds = {}
+            if c.get("opus", True):
+                sys.path.insert(0, str(ROOT / "tools"))
+                import encode_sounds
+                sounds = encode_sounds.encode(c["game"], ROOT / "build/compressed", log=self.log)
+            self.stage_game(Path(c["game"]), romfs_data, videos, sounds)
         else:
             (STAGE / "romfs/README.txt").write_text("Game data is read from sdmc:/switch/mafia/data\n")
         tmp = Path(tempfile.mkdtemp(prefix="familia_"))
@@ -242,14 +247,17 @@ class Builder:
         self.log(f"finished in {(time.time() - t0) / 60:.0f} min: {nsp_out}")
         return nsp_out
 
-    def stage_game(self, src, dst, videos=None):
+    def stage_game(self, src, dst, videos=None, sounds=None):
         """the game folder into romfs/data. Left out: videos replaced by their
         H.265 re-encode (videos: original name -> .mkv), and name.bik where
         name.avi exists (the game plays the .avi; the .bik is a spare copy)."""
-        videos = videos or {}
+        videos, sounds = videos or {}, sounds or {}
         files = [p for p in src.rglob("*") if p.is_file()]
+        snd_dir = next((p for p in src.iterdir() if p.is_dir() and p.name.lower() == "sounds"), None)
         top = {p.name.lower() for p in files if p.parent == src}
         def left_out(p):
+            if p.parent == snd_dir and p.name in sounds:
+                return True                # sounds/x.wav as x.opus (switch/nx_opusfs.c)
             if p.parent != src:
                 return False
             if p.name in videos:
@@ -258,8 +266,16 @@ class Builder:
         dropped = [p for p in files if left_out(p)]
         files = [p for p in files if not left_out(p)]
         if dropped:
-            self.log("left out (re-encoded or unused): " + ", ".join(p.name for p in dropped) +
-                     f" ({sum(p.stat().st_size for p in dropped) / 2**20:.0f} MB)")
+            vids = [p.name for p in dropped if p.parent == src]
+            self.log(f"left out: {len(dropped) - len(vids)} WAV sounds (packed as Opus), videos " +
+                     ", ".join(vids) + f" ({sum(p.stat().st_size for p in dropped) / 2**20:.0f} MB in all)")
+        if sounds:
+            (dst / snd_dir.name).mkdir(parents=True, exist_ok=True)
+            for o in sounds.values():
+                try:
+                    os.link(o, dst / snd_dir.name / Path(o).name)
+                except OSError:
+                    shutil.copy2(o, dst / snd_dir.name / Path(o).name)
         for v in videos.values():
             dst.mkdir(parents=True, exist_ok=True)
             shutil.copy2(v, dst / Path(v).name)
@@ -434,7 +450,7 @@ def cli(a):
     c = {"game": a.game, "keys": a.keys, "hbp": a.hacbrewpack or find_hacbrewpack(),
          "pcrecomp": a.pcrecomp, "out": a.out, "engine": a.engine or find_engine(),
          "jobs": a.jobs, "full": a.full, "verify": not a.no_verify, "retranslate": a.retranslate,
-         "hevc": not a.original_videos}
+         "hevc": not a.original_videos, "opus": not a.wav_sounds}
     last = [None]
 
     def emit(k, val):
@@ -463,5 +479,6 @@ if __name__ == "__main__":
     ap.add_argument("--no-verify", action="store_true")
     ap.add_argument("--retranslate", action="store_true")
     ap.add_argument("--original-videos", action="store_true", help="keep the original videos (no H.265 re-encode)")
+    ap.add_argument("--wav-sounds", action="store_true", help="keep the sounds as WAV (no Opus)")
     a = ap.parse_args()
     cli(a) if a.cli else gui()

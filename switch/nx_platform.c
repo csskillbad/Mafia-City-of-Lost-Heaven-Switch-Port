@@ -262,6 +262,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* the all-in-one NSP's sounds are Opus: sounds/x.wav decoded from sounds/x.opus on open */
+    { void nx_opusfs_install(const char *); nx_opusfs_install(game_dir); }
+
     nx_load_config(NX_ROOT "/config.ini");
     nx_setenv_default("FAMILIA_GAME_DIR", game_dir);
     fprintf(stderr, "[nx] game files: %s\n", game_dir);

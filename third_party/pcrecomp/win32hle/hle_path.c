@@ -237,10 +237,16 @@ int hle_host_path_for_write(const char *guest, char *out, size_t n, int keep) {
 
 static int host_path_plain(const char *guest, char *out, size_t n);
 
+/* [familia] a file the game names that is not there may be stood in for by
+ * the port (the Switch NSP's sounds/x.wav from sounds/x.opus): the hook gets
+ * the host path and may rewrite it, returning 1 */
+int (*hle_missing_file_hook)(char *path, size_t n);
+
 int hle_host_path(const char *guest, char *out, size_t n) {
     int exists = host_path_plain(guest, out, n);
     char ov[1024];
     struct stat st;
+    if (!exists && hle_missing_file_hook && hle_missing_file_hook(out, n)) return 1;
     /* A file only: a directory stays the game's (the cwd is set through here,
      * and FindFirstFileA lists both) */
     if (g_overlay && hle_overlay_of(out, ov, sizeof ov) == 1 && stat(ov, &st) == 0 && !S_ISDIR(st.st_mode)) {
