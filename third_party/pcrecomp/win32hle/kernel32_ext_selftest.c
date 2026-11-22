@@ -142,6 +142,19 @@ int main(void) {
            strstr(p, "/mod/maps/a.map"));
         if (f) fclose(f);
         ok("overlay: the game's files untouched", access("/tmp/hleov/game/saves", F_OK) != 0);
+        /* [familia] a folder only the overlay has (savegame\ on the Switch,
+         * whose game data is read-only): found, and its files listed */
+        f = fopen("/tmp/hleov/mod/saves/one.sav", "w"); if (f) fputs("save", f), fclose(f);
+        ok("overlay: a folder only in the overlay is found", hle_host_path("C:\\saves", p, sizeof p) && strstr(p, "/mod/saves"));
+        {
+            uint32_t fd = hle_va(hle_alloc(320)), pat = hle_guest_strdup("C:\\saves\\*.sav");
+            uint32_t args[2] = { pat, fd };
+            mach_enter();
+            uint32_t h = hle_call_guest(hle_resolve("FindFirstFileA"), 2, args);
+            mach_leave();
+            ok("overlay: FindFirstFileA lists a folder only in the overlay",
+               h != 0xFFFFFFFFu && !strcmp((const char *)hle_ptr(fd + 44), "one.sav"));
+        }
         snprintf(want, sizeof want, "%s/game", root);
         ok("overlay: a directory stays the game's (the cwd)", hle_host_path("C:\\", p, sizeof p) && !strcmp(p, want));
         chdir("/tmp/hleov/game");

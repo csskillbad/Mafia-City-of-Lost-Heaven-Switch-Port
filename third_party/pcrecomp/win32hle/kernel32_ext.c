@@ -560,8 +560,11 @@ static void k_FindFirstFileA_impl(void) {                /* (pattern, &data) */
     if (!gdir[0]) snprintf(gdir, sizeof gdir, ".");
     hle_host_path_base(gdir, f->dir, sizeof f->dir);
     char overlay_dir[1024];
-    if (hle_overlay_of(f->dir, overlay_dir, sizeof overlay_dir) == 1 && (f->base = opendir(f->dir))) {
-        snprintf(f->base_dir, sizeof f->base_dir, "%s", f->dir);
+    if (hle_overlay_of(f->dir, overlay_dir, sizeof overlay_dir) == 1) {
+        /* [familia] the overlay's folder is listed even when the game has
+         * none of its own (savegame\ is only ever in the overlay: the
+         * Switch NSP's read-only data has no such folder) */
+        if ((f->base = opendir(f->dir))) snprintf(f->base_dir, sizeof f->base_dir, "%s", f->dir);
         snprintf(f->dir, sizeof f->dir, "%s", overlay_dir);
     }
     snprintf(f->mask, sizeof f->mask, "%s", sl);

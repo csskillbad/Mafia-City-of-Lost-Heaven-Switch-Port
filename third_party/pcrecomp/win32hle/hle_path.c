@@ -248,8 +248,9 @@ int hle_host_path(const char *guest, char *out, size_t n) {
     struct stat st;
     if (!exists && hle_missing_file_hook && hle_missing_file_hook(out, n)) return 1;
     /* A file only: a directory stays the game's (the cwd is set through here,
-     * and FindFirstFileA lists both) */
-    if (g_overlay && hle_overlay_of(out, ov, sizeof ov) == 1 && stat(ov, &st) == 0 && !S_ISDIR(st.st_mode)) {
+     * and FindFirstFileA lists both) -- [familia] unless the game has no such
+     * directory: savegame\ exists only in the overlay */
+    if (g_overlay && hle_overlay_of(out, ov, sizeof ov) == 1 && stat(ov, &st) == 0 && (!S_ISDIR(st.st_mode) || !exists)) {
         snprintf(out, n, "%s", ov);
         return 1;
     }
