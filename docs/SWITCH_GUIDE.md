@@ -115,6 +115,8 @@ Controller, any player slot. In the game:
 | **-** | map | |
 | **+** | pause menu | pause menu |
 
+Cutscenes in the game: **A** or **B** skips one (Space / Enter on PC).
+
 Everything can be changed in *Options -> Controls*. A profile made by an
 earlier build of the port gets this layout on its next start.
 

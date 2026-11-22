@@ -45,7 +45,27 @@ typedef struct {
     double pos;                 /* the play cursor, in frames */
     int volume, pan;            /* hundredths of a dB; -10000..10000 */
     float gl, gr;
+    /* [familia] IDirectSoundNotify: events set as the play cursor passes
+     * these byte offsets (0xFFFFFFFF: on stop). LS3DF streams its Ogg music
+     * through a buffer refilled at each notification. */
+    uint32_t nn, noff[32], nev[32];
 } dsbuf;
+void hle_set_event_async(uint32_t h);                    /* kernel32.c: SetEvent from a thread off the machine */
+#define DSBPN_OFFSETSTOP 0xFFFFFFFFu
+/* Under g_mix: the notifications the cursor passed, from frame p0 to b->pos
+ * (wraps: times it went round the buffer), or to the end if it stopped there. */
+static void notify_passed(const dsbuf *b, double p0, int wraps, int stopped) {
+    uint32_t o0 = (uint32_t)p0 * (uint32_t)b->block, o1 = stopped ? b->bytes : (uint32_t)b->pos * (uint32_t)b->block;
+    for (uint32_t i = 0; i < b->nn; i++) {
+        uint32_t off = b->noff[i];
+        int hit = off == DSBPN_OFFSETSTOP ? stopped
+                : wraps > 1 ? 1 : wraps == 1 ? (off >= o0 || off < o1) : (off >= o0 && off < o1);
+        if (hit) hle_set_event_async(b->nev[i]);
+    }
+}
+static void notify_stopped(const dsbuf *b) {
+    for (uint32_t i = 0; i < b->nn; i++) if (b->noff[i] == DSBPN_OFFSETSTOP) hle_set_event_async(b->nev[i]);
+}
 
 static pthread_mutex_t g_mix = PTHREAD_MUTEX_INITIALIZER;
 #define MAX_BUFS 4096   /* [familia] Mafia keeps hundreds of 3D sounds loaded per level (was 256) */
@@ -128,18 +148,33 @@ static void mix(void *ud, Uint8 *stream, int len) {
         dsbuf *b = g_buf[i];
         if (!b || !b->playing || b->primary || !b->block) continue;
         uint32_t nframes = b->bytes / (uint32_t)b->block;
-        double step = (double)b->rate / OUT_RATE;
+        double step = (double)b->rate / OUT_RATE, p0 = b->pos;
+        int wraps = 0, stopped = 0;
         for (int f = 0; f < frames && b->playing; f++) {
             uint32_t at = (uint32_t)b->pos;
             if (at >= nframes) {
-                if (b->looping) { b->pos -= nframes; at = (uint32_t)b->pos; if (at >= nframes) b->pos = 0, at = 0; }
-                else { b->playing = 0; b->pos = 0; break; }
+                if (b->looping) { b->pos -= nframes; at = (uint32_t)b->pos; if (at >= nframes) b->pos = 0, at = 0; wraps++; }
+                else { b->playing = 0; b->pos = 0; stopped = 1; break; }
             }
             float l = sample(b, at, 0), r = b->channels > 1 ? sample(b, at, 1) : l;
             acc[2 * f] += l * b->gl;
             acc[2 * f + 1] += r * b->gr;
             b->pos += step;
         }
+        if (b->nn) notify_passed(b, p0, wraps, stopped);
+    }
+    {   /* HLE_DSOUND_DEBUG=1: every ~5 s, the buffers with notifications (streams) */
+        static int dbg = -1; static unsigned calls;
+        if (dbg < 0) dbg = getenv("HLE_DSOUND_DEBUG") != NULL;
+        if (dbg && ++calls % 200 == 0)
+            for (int i = 0; i < MAX_BUFS; i++) {
+                dsbuf *b = g_buf[i];
+                if (!b || !b->nn || !b->block) continue;
+                int peak = 0;
+                for (uint32_t k = 0; k + 1 < b->bytes / 2; k += 64) { int v = abs(((int16_t *)b->data)[k]); if (v > peak) peak = v; }
+                fprintf(stderr, "[dsound] stream buffer %d: playing %d pos %u/%u, %u notifications, peak %d, gain %.2f/%.2f, master %.2f\n",
+                        i, b->playing, (uint32_t)b->pos * (uint32_t)b->block, b->bytes, b->nn, peak, b->gl, b->gr, g_master);
+            }
     }
     for (int i = 0; i < MAX_STREAMS; i++) {
         if (!g_stream[i].used) continue;
@@ -341,11 +376,43 @@ static void b_Stop(void) {
     dsbuf *b = buf_of(A32(0));
     if (!b) RET(DSERR_INVALIDPARAM, 1);
     pthread_mutex_lock(&g_mix);
+    if (b->playing) notify_stopped(b);
     b->playing = 0;
     pthread_mutex_unlock(&g_mix);
     RET(DS_OK, 1);
 }
 static void b_Restore(void) { RET(DS_OK, 1); }
+
+/* ---- IDirectSoundNotify, of a buffer: the object keeps its buffer's slot ---- */
+static uint32_t g_vt_notify;
+static void n_Release(void) {
+    uint32_t self = A32(0), n = --MEM32(self + 4);
+    if (!n) hle_com_free(self);
+    RET(n, 1);
+}
+static void n_SetNotificationPositions(void) {           /* (this, count, DSBPOSITIONNOTIFY[]: offset, event) */
+    dsbuf *b = buf_of(A32(0));
+    uint32_t n = A32(1), p = A32(2);
+    if (!b || (n && !p) || n > 32) RET(DSERR_INVALIDPARAM, 3);
+    pthread_mutex_lock(&g_mix);
+    for (uint32_t i = 0; i < n; i++) b->noff[i] = MEM32(p + 8 * i), b->nev[i] = MEM32(p + 8 * i + 4);
+    b->nn = n;
+    pthread_mutex_unlock(&g_mix);
+    RET(DS_OK, 3);
+}
+uint32_t hle_dsound_notify_new(uint32_t buffer) {        /* QueryInterface(IID_IDirectSoundNotify) of a buffer */
+    if (!buf_of(buffer)) return 0;
+    if (!g_vt_notify) {
+        static const win32hle_shim nt[] = {
+            { "IDirectSoundNotify::QueryInterface", hle_com_QueryInterface }, { "IDirectSoundNotify::AddRef", hle_com_AddRef },
+            { "IDirectSoundNotify::Release", n_Release },
+            { "IDirectSoundNotify::SetNotificationPositions", n_SetNotificationPositions }, { 0, 0 } };
+        g_vt_notify = hle_com_vtable(nt);
+    }
+    uint32_t o = hle_com_new(g_vt_notify, 12);
+    SLOT(o) = SLOT(buffer);
+    return o;
+}
 
 /* ---- IDirectSound ---- */
 static void d_Release(void) {
@@ -401,7 +468,7 @@ static void d_DuplicateSoundBuffer(void) {               /* (this, original, &ou
     *b = *src;
     (*b->data_refs)++;
     pthread_mutex_unlock(&g_mix);
-    b->playing = 0, b->pos = 0;
+    b->playing = 0, b->pos = 0, b->nn = 0;
     uint32_t o = new_buffer(b);
     MEM32(A32(2)) = o;
     RET(o ? DS_OK : DSERR_INVALIDPARAM, 3);

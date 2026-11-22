@@ -355,7 +355,7 @@ static void k_CreateEventA(void) {                       /* (sa, manual, initial
     g_last_error = 0;
     RET(h, 4);
 }
-void hle_set_event(uint32_t h) { hevent *e = (hevent *)hle_handle_obj(h, HLE_H_EVENT); if (e) e->signaled = 1; }
+void hle_set_event(uint32_t h) { hevent *e = h ? (hevent *)hle_handle_obj(h, HLE_H_EVENT) : NULL; if (e) e->signaled = 1; }
 static void k_OpenEventA(void) { uint32_t h = named_find(ASTR(2)); if (!h) g_last_error = 2; RET(h, 3); }
 static void k_SetEvent(void)   { hevent *e = (hevent *)hle_handle_obj(A32(0), HLE_H_EVENT); if (e) e->signaled = 1; RET(e ? 1u : 0u, 1); }
 static void k_ResetEvent(void) { hevent *e = (hevent *)hle_handle_obj(A32(0), HLE_H_EVENT); if (e) e->signaled = 0; RET(e ? 1u : 0u, 1); }
@@ -401,7 +401,25 @@ static void k_ReleaseSemaphore(void) {
 /* Try to take one object: 1 if it is signalled (and consumed, as its type
  * says), 0 if not, -1 if it is not a waitable handle. */
 int (*hle_wait_hook)(uint32_t h);        /* a host's own objects (threads, sockets) */
+
+/* [familia] SetEvent from a host thread that does not hold the machine (the
+ * audio mixer's DirectSound position notifications): the handle is queued
+ * lock-free and set by the next wait, which runs under the machine. A handle
+ * closed in between is simply not found. */
+#define ASYNC_SIGNALS 64
+static volatile uint32_t g_async_sig[ASYNC_SIGNALS];
+void hle_set_event_async(uint32_t h) {
+    if (!h) return;
+    for (int i = 0; i < ASYNC_SIGNALS; i++) if (g_async_sig[i] == h) return;
+    for (int i = 0; i < ASYNC_SIGNALS; i++) if (__sync_bool_compare_and_swap(&g_async_sig[i], 0u, h)) return;
+}
+static void drain_async_signals(void) {
+    for (int i = 0; i < ASYNC_SIGNALS; i++)
+        if (g_async_sig[i]) hle_set_event(__sync_lock_test_and_set(&g_async_sig[i], 0u));
+}
+
 static int try_take(uint32_t h) {
+    drain_async_signals();
     if (hle_wait_hook) { int r = hle_wait_hook(h); if (r >= 0) return r; }
     switch (hle_handle_type(h)) {
     case HLE_H_EVENT: {

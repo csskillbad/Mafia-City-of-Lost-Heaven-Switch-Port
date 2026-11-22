@@ -91,6 +91,11 @@ static void v_open_callbacks(void) {   /* (ds, vf, initial, ibytes, {read, seek,
     ov_callbacks cb = { io_read, s->cb_seek ? io_seek : NULL, io_close, s->cb_tell ? io_tell : NULL };
     int r = ov_open_callbacks(s, &s->vf, CA(3) ? (const char *)hle_ptr(CA(2)) : NULL, (long)(int32_t)CA(3), cb);
     if (r < 0) { s->used = 0; MEM32(gvf) = 0; fprintf(stderr, "[vorbis] ov_open_callbacks failed (%d)\n", r); }
+    else {
+        static int nlog;
+        vorbis_info *vi = ov_info(&s->vf, -1);
+        if (nlog++ < 20 && vi) fprintf(stderr, "[vorbis] stream %d open: %ld Hz, %d ch, %.0f s\n", i, vi->rate, vi->channels, ov_time_total(&s->vf, -1));
+    }
     CRET(r);
 }
 static void v_clear(void) {

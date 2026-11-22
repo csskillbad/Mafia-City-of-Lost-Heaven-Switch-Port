@@ -203,7 +203,8 @@ static void f_ds_GetCaps(void) {                       /* (this, DSCAPS*) */
 static void f_ds_VerifyCertification(void) { if (A32(1)) MEM32(A32(1)) = 0; RET(DS_OK, 2); }   /* DS_UNCERTIFIED */
 
 /* buffers */
-static const uint32_t IID_3DBUFFER = 0x279AFA86u, IID_3DLISTENER = 0x279AFA84u, IID_DSB = 0x279AFA85u, IID_DSB8 = 0x6825A449u;
+static const uint32_t IID_3DBUFFER = 0x279AFA86u, IID_3DLISTENER = 0x279AFA84u, IID_DSB = 0x279AFA85u, IID_DSB8 = 0x6825A449u, IID_NOTIFY = 0xB0210783u;
+uint32_t hle_dsound_notify_new(uint32_t buffer);   /* win32hle dsound.c */
 static void f_b_QueryInterface(void) {                /* (this, riid, out**) */
     uint32_t iid = MEM32(A32(1)), self = A32(0), out = A32(2);
     sbuf *s = find(self);
@@ -219,6 +220,10 @@ static void f_b_QueryInterface(void) {                /* (this, riid, out**) */
         s->is3d = 1;
         MEM32(self + 4)++;
         MEM32(out) = s->obj3d; RET(DS_OK, 3);
+    }
+    if (iid == IID_NOTIFY) {                           /* LS3DF's Ogg music stream (IShow) */
+        uint32_t n = hle_dsound_notify_new(self);
+        if (n) { MEM32(out) = n; RET(DS_OK, 3); }
     }
     if (iid == IID_3DLISTENER) {                       /* asked of the primary buffer */
         if (!g_l.obj) g_l.obj = fam_com_new(&DSL_iface, (void *)(uintptr_t)self);

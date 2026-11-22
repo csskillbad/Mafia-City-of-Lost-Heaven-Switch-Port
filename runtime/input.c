@@ -286,6 +286,15 @@ static int in_menu(void) {
     uint32_t mis = MEM32(GAME_MISSION), game = mis ? MEM32(mis + 0x24) : 0;
     return !game || !MEM32(game + 0xE4);               /* no player */
 }
+/* the engine's cutscene (C_recorder cutscene, GAME 0x647900) plays: the
+ * main loop then skips it on Space or Enter (GameLoopSingle 0x5BE750) */
+#define CUTSCENE_OBJ        0x647900u
+#define CUTSCENE_PLAY_TICKS 0x647A58u
+static int cutscene_playing(void) {
+    if (MEM32(CUTSCENE_PLAY_TICKS)) return 1;
+    uint32_t st = MEM32(CUTSCENE_OBJ + 0xE4);
+    return st != 0 && st != 4;                          /* CUTSCENE_STATE_0, CUTSCENE_STOPPED */
+}
 static void pad_update(void) {
     if (!g_raw.on && !g_pad_script) return;
     uint32_t b = (pad_held() | g_pad_latch_engine) & ~g_swallow;
@@ -293,6 +302,14 @@ static void pad_update(void) {
     if (g_movie) b = 0;                                /* the video player reads the buttons itself */
     uint8_t want[256] = {0};
     if (b & (1u << FAM_PB_START)) want[0x01] = 0x80;                 /* Start: Esc */
+    if (!MEM32(GAME_MENU) && cutscene_playing()) {      /* A or B: Enter, the cutscene's skip */
+        uint32_t skip = b & ((1u << FAM_PB_A) | (1u << FAM_PB_B));
+        if (skip) {
+            want[0x1C] = 0x80;
+            g_swallow |= skip;                         /* held on, it must not act in play after it */
+            fprintf(stderr, "[input] cutscene skip (state %u)\n", MEM32(CUTSCENE_OBJ + 0xE4));
+        }
+    }
     if (in_menu()) {
         g_pad_latch = 0;                               /* menu presses are not replayed into play */
         int32_t lx, ly; stick(0, &lx, &ly);

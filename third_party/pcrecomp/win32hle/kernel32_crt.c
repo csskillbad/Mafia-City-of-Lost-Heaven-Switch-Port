@@ -48,17 +48,23 @@ static void *thread_trampoline(void *p) {
  * machine hand-over (host_lite.c mach_take). The caller's own suspension
  * (SuspendThread on itself) takes effect at its next hand-over too. */
 extern int (*hle_suspend_pending)(void);
-static int suspend_pending(void) { return t_self && t_self->suspend > 0 && !t_self->done; }
+/* 1: park until resumed; 2: terminated (TerminateThread), the thread ends there */
+static int suspend_pending(void) {
+    if (!t_self || t_self->suspend <= 0 || t_self->done) return 0;
+    if (t_self->suspend >= 1 << 20) { t_self->done = 1; return 2; }
+    return 1;
+}
 static void k_SuspendThread(void) {
     struct thread_arg *a = (struct thread_arg *)hle_handle_obj(A32(0), HLE_H_THREAD);
     if (!a) RET(0xFFFFFFFFu, 1);
     hle_suspend_pending = suspend_pending;
     RET((uint32_t)__sync_fetch_and_add(&a->suspend, 1), 1);
 }
-static void k_TerminateThread(void) {             /* only honoured for threads that have not started */
+static void k_TerminateThread(void) {             /* the target ends at its next machine hand-over */
     struct thread_arg *a = (struct thread_arg *)hle_handle_obj(A32(0), HLE_H_THREAD);
     if (!a) RET(0, 2);
-    if (!a->done) fprintf(stderr, "[kernel32] TerminateThread(tid %u): thread left parked\n", a->tid);
+    hle_suspend_pending = suspend_pending;           /* it ends at its next hand-over */
+    fprintf(stderr, "[kernel32] TerminateThread(tid %u)%s\n", a->tid, a->done ? ": already ended" : "");
     a->suspend = 1 << 20; a->code = A32(1);
     RET(1, 2);
 }

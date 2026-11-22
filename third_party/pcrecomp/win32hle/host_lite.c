@@ -79,6 +79,7 @@ int (*hle_suspend_pending)(void);
 volatile uint64_t hle_mach_takes, hle_yields;     /* [familia] counters for the [stats] line */
 volatile uint64_t hle_mach_wait_ns;                /* [familia] time spent waiting for the machine */
 static uint64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
+static void thread_end_terminated(void);
 static void mach_take(void) {
     hle_mach_takes++;
     for (;;) {
@@ -90,8 +91,10 @@ static void mach_take(void) {
         }
         __sync_fetch_and_sub(&g_waiters, 1);
         g_owner_gen++;
-        if (!hle_suspend_pending || !hle_suspend_pending()) return;
+        int sp = hle_suspend_pending ? hle_suspend_pending() : 0;
+        if (!sp) return;
         pthread_mutex_unlock(&g_mach);
+        if (sp == 2) thread_end_terminated();          /* [familia] TerminateThread: never returns */
         usleep(500);
     }
 }
@@ -134,8 +137,17 @@ static uint32_t make_tib(uint32_t lo, uint32_t hi) {
     return hle_va(t);
 }
 
-typedef struct { regs_t r; int depth, inited; } mstate;
+typedef struct { regs_t r; int depth, inited; uint32_t stack_lo; } mstate;
 static __thread mstate g_ms;
+/* [familia] A terminated thread, off the machine: its guest stack and thread
+ * block go back, and the host thread ends where it stands (as ExitThread). */
+static void thread_end_terminated(void) {
+    if (g_ms.inited && g_ms.stack_lo) {
+        hle_vm_release(g_ms.stack_lo, GUEST_STACK);
+        hle_free(hle_ptr(g_ms.r.fs));
+    }
+    pthread_exit(NULL);
+}
 
 void mach_enter(void) {
     if (g_ms.depth++ == 0) {
@@ -143,6 +155,7 @@ void mach_enter(void) {
             uint32_t lo = hle_vm_reserve(0, GUEST_STACK);
             if (!lo) hle_fatal("no guest memory for a thread's stack");
             g_ms.r.esp    = lo + GUEST_STACK - 64;
+            g_ms.stack_lo = lo;
             g_ms.r.fs     = make_tib(lo, lo + GUEST_STACK);
             g_ms.r.fpu_cw = 0x027F;
             g_ms.inited   = 1;

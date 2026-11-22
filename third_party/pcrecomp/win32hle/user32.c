@@ -600,12 +600,20 @@ static void u_MsgWaitForMultipleObjects(void) {
     uint32_t n = A32(0), all = A32(2), timeout = A32(3), hs[64], start = hle_ticks_ms();
     if (n > 64) n = 64;
     for (uint32_t i = 0; i < n; i++) hs[i] = MEM32(A32(1) + 4 * i);
+    /* [familia] each poll takes the machine from the game thread: back off
+     * from 1 ms to 8 ms while nothing comes (LS3DF's Ogg music thread waits
+     * here for DirectSound notifications 3-4 times a second) */
+    uint32_t nap = 1000;
     for (;;) {
         if (n) { uint32_t r = hle_wait((int)n, hs, (int)all, 0); if (r != 0x102u) RET(r, 5); }   /* not WAIT_TIMEOUT */
         msg_t m;
         if (next_message(&m, 0, 0, 0, 0)) RET(n, 5);
-        if (timeout != 0xFFFFFFFFu && hle_ticks_ms() - start >= timeout) RET(0x102u, 5);
-        hle_block_begin(); usleep(1000); hle_block_end();
+        uint32_t waited = hle_ticks_ms() - start;
+        if (timeout != 0xFFFFFFFFu && waited >= timeout) RET(0x102u, 5);
+        uint32_t us = nap;
+        if (timeout != 0xFFFFFFFFu && (timeout - waited) * 1000u < us) us = (timeout - waited) * 1000u;
+        hle_block_begin(); usleep(us); hle_block_end();
+        if (nap < 8000) nap *= 2;
     }
 }
 static void u_PostQuitMessage(void) { g_quit = 1, g_quit_code = A32(0); RETV(1); }

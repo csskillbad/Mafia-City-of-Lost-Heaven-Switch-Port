@@ -15,6 +15,7 @@
  */
 #include <switch.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "win32hle.h"
 #include "recomp_types.h"
@@ -124,6 +125,8 @@ void nx_textinput_install(void) {
     static int done;
     if (done) return;
     done = 1;
+    { const char *e = getenv("FAMILIA_SYSTEM_KEYBOARD");      /* SYSTEM_KEYBOARD=0: off (emulator tests type by script) */
+      if (e && *e == '0') { fprintf(stderr, "[nx] keyboard: on-screen keyboard off (config)\n"); return; } }
     g_orig_draw = recomp_lookup(TEXTEDIT_DRAW);
     if (!g_orig_draw || MEM32(TEXTEDIT_VTABLE + 4 * DRAW_SLOT) != TEXTEDIT_DRAW) {
         fprintf(stderr, "[nx] keyboard: text field not found (vtable %08X), on-screen keyboard off\n",
